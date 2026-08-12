@@ -3,7 +3,7 @@ package com.xtawa.samsunghzops.data.settings
 import android.content.pm.PackageManager
 import com.xtawa.samsunghzops.core.model.OperationResult
 import com.xtawa.samsunghzops.core.model.SettingNamespace
-import dev.rikka.shizuku.Shizuku
+import rikka.shizuku.Shizuku
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

@@ -7,6 +7,13 @@ enum class RefreshMode {
     STANDARD,
     ADAPTIVE,
     MAXIMUM,
+
+    val label: String
+        get() = when (this) {
+            STANDARD -> "标准"
+            ADAPTIVE -> "自适应"
+            MAXIMUM -> "最高"
+        }
 }
 
 enum class SettingNamespace {

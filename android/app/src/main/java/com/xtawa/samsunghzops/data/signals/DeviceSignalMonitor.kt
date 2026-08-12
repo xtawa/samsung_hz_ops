@@ -39,7 +39,7 @@ class DeviceSignalMonitor(
 
     private val routeCallback = object : MediaRouter.SimpleCallback() {
         override fun onRouteSelected(router: MediaRouter, type: Int, info: MediaRouter.RouteInfo) {
-            state.setCasting(!info.isDefault)
+            state.setCasting(true)
         }
 
         override fun onRouteUnselected(router: MediaRouter, type: Int, info: MediaRouter.RouteInfo) {
@@ -70,7 +70,6 @@ class DeviceSignalMonitor(
         mediaRouter?.addCallback(
             MediaRouter.ROUTE_TYPE_LIVE_VIDEO,
             routeCallback,
-            MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY,
         )
         ContextCompat.registerReceiver(
             appContext,

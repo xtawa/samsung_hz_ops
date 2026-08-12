@@ -19,7 +19,7 @@ class MainActivity : ComponentActivity() {
         applyShortcutIntent(intent)
     }
 
-    override fun onNewIntent(intent: android.content.Intent?) {
+    override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         applyShortcutIntent(intent)
