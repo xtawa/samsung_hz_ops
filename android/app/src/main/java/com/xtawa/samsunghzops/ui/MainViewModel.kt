@@ -295,6 +295,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openShizukuIntent(): Intent? =
         getApplication<Application>().packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+            ?: Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$SHIZUKU_PACKAGE"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    fun isShizukuInstalled(): Boolean = container.privilegedWriter.statusSnapshot().shizukuInstalled
 
     fun shouldOpenShizuku(): Boolean = !container.privilegedWriter.statusSnapshot().binderAlive
 

@@ -34,6 +34,22 @@ enum class Capability {
     NOTIFICATIONS,
     IGNORE_BATTERY_OPTIMIZATIONS,
     BATTERY_MANAGER,
+
+    ;
+
+    val label: String
+        get() = when (this) {
+            READ_DISPLAY -> "读取屏幕刷新率"
+            WRITE_SYSTEM_SETTINGS -> "修改系统设置"
+            WRITE_SECURE_SETTINGS -> "安全设置权限"
+            WRITE_GLOBAL_SETTINGS -> "全局设置权限"
+            SHIZUKU -> "Shizuku 授权"
+            ACCESSIBILITY -> "辅助功能服务"
+            OVERLAY -> "悬浮窗权限"
+            NOTIFICATIONS -> "通知权限"
+            IGNORE_BATTERY_OPTIMIZATIONS -> "忽略电池优化"
+            BATTERY_MANAGER -> "电池状态读取"
+        }
 }
 
 enum class CapabilityState {
