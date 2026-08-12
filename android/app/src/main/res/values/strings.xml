@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Samsung Hz Ops</string>
+    <string name="accessibility_service_description">仅用于识别前台应用和交互事件，以应用刷新率规则；不会读取输入内容。</string>
+</resources>
