@@ -6,7 +6,7 @@ import java.time.Instant
 enum class RefreshMode {
     STANDARD,
     ADAPTIVE,
-    MAXIMUM,
+    MAXIMUM;
 
     val label: String
         get() = when (this) {
