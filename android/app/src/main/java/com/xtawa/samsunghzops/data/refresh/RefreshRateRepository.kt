@@ -105,7 +105,9 @@ class RefreshRateRepository(
         }.orEmpty()
         val activeRate = display?.mode?.refreshRate
         val settingsRange = readSettingsRange(modes)
+        val inferredMode = inferActiveMode(settingsRange, modes)
         _snapshot.value = _snapshot.value.copy(
+            activeMode = inferredMode ?: _snapshot.value.activeMode,
             activeRefreshRateHz = activeRate,
             supportedModes = modes,
             range = settingsRange ?: _snapshot.value.range,
@@ -216,6 +218,43 @@ class RefreshRateRepository(
 
     private fun nearestSupportedHz(value: Float, supportedHz: List<Float>): Float =
         supportedHz.minByOrNull { kotlin.math.abs(it - value) } ?: value
+
+    private fun inferActiveMode(
+        range: RefreshRange?,
+        modes: List<DisplayModeInfo>,
+    ): RefreshMode? {
+        if (range == null) return null
+        val supportedHz = modes.map { it.refreshRateHz }
+            .filter { it.isFinite() && it > 0f }
+            .distinct()
+            .sorted()
+        val lowest = supportedHz.firstOrNull() ?: return if (approximatelyEqual(range.minHz, range.maxHz)) {
+            RefreshMode.STANDARD
+        } else {
+            RefreshMode.ADAPTIVE
+        }
+        val highest = supportedHz.last()
+        val fixed = approximatelyEqual(range.minHz, range.maxHz)
+        return when {
+            fixed && approximatelyEqual(range.maxHz, highest) && !approximatelyEqual(lowest, highest) -> {
+                RefreshMode.MAXIMUM
+            }
+
+            fixed -> RefreshMode.STANDARD
+            approximatelyEqual(range.minHz, lowest) && approximatelyEqual(range.maxHz, highest) -> {
+                RefreshMode.ADAPTIVE
+            }
+
+            else -> RefreshMode.ADAPTIVE
+        }
+    }
+
+    private fun approximatelyEqual(left: Float, right: Float): Boolean =
+        kotlin.math.abs(left - right) < REFRESH_RATE_EPSILON
+
+    private companion object {
+        const val REFRESH_RATE_EPSILON = 0.1f
+    }
 }
 
 /** Numeric Samsung mode values vary by One UI/device; keep them injectable. */
