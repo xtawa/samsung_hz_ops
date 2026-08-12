@@ -1,0 +1,41 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="adaptive"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_manage"
+        android:shortcutShortLabel="@string/shortcut_adaptive_short"
+        android:shortcutLongLabel="@string/shortcut_adaptive_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xtawa.samsunghzops"
+            android:targetClass="com.xtawa.samsunghzops.MainActivity">
+            <extra android:name="mode" android:value="ADAPTIVE" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="standard"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_manage"
+        android:shortcutShortLabel="@string/shortcut_standard_short"
+        android:shortcutLongLabel="@string/shortcut_standard_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xtawa.samsunghzops"
+            android:targetClass="com.xtawa.samsunghzops.MainActivity">
+            <extra android:name="mode" android:value="STANDARD" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="maximum"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_manage"
+        android:shortcutShortLabel="@string/shortcut_maximum_short"
+        android:shortcutLongLabel="@string/shortcut_maximum_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.xtawa.samsunghzops"
+            android:targetClass="com.xtawa.samsunghzops.MainActivity">
+            <extra android:name="mode" android:value="MAXIMUM" />
+        </intent>
+    </shortcut>
+</shortcuts>
