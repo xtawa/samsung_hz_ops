@@ -16,7 +16,10 @@ class TransactionCoordinatorTest {
 
     @Test
     fun secondWriteFailureRollsBackFirstWrite() = runTest {
-        val values = mutableMapOf(first.key to "old-first", second.key to "old-second")
+        val values = mutableMapOf<String, String?>(
+            first.key to "old-first",
+            second.key to "old-second",
+        )
         val writes = mutableListOf<Pair<String, String?>>()
         val backend = object : SettingsBackend {
             override fun read(spec: SettingSpec) = OperationResult.Success(values[spec.key])
