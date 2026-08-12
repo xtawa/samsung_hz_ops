@@ -78,6 +78,13 @@ class SamsungPowerSaveBackend(
         )
     }
 
+    fun markKeepHighRefreshDisabled(error: String? = null) {
+        _state.value = _state.value.copy(
+            keepHighRefresh = false,
+            lastError = error,
+        )
+    }
+
     suspend fun setKeepHighRefresh(enabled: Boolean): OperationResult<Unit> {
         val mutations = listOf(
             SettingMutation(

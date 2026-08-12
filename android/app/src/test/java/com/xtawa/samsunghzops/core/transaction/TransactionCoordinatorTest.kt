@@ -44,6 +44,63 @@ class TransactionCoordinatorTest {
         )
         assertTrue(result is OperationResult.Failure)
         assertEquals("old-first", values[first.key])
-        assertEquals(listOf("new-first", "new-second", "old-first"), writes.map { it.second })
+        assertEquals("old-second", values[second.key])
+        assertEquals(
+            listOf("new-first", "new-second", "new-second", "new-second", "old-second", "old-first"),
+            writes.map { it.second },
+        )
+    }
+
+    @Test
+    fun successfulWriteCapturesOriginalValueBeforeMutation() = runTest {
+        val values = mutableMapOf<String, String?>(first.key to "old-first")
+        val captured = mutableListOf<Pair<String, String?>>()
+        val backend = object : SettingsBackend {
+            override fun read(spec: SettingSpec) = OperationResult.Success(values[spec.key])
+
+            override suspend fun write(spec: SettingSpec, value: String?): OperationResult<Unit> {
+                values[spec.key] = value
+                return OperationResult.Success(Unit)
+            }
+
+            override fun canWrite(spec: SettingSpec) = true
+        }
+
+        val result = TransactionCoordinator(
+            backend = backend,
+            managedSnapshotSink = { spec, originalValue -> captured += spec.key to originalValue },
+        ).apply("test", listOf(SettingMutation(first, "new-first")))
+
+        assertTrue(result is OperationResult.Success)
+        assertEquals("new-first", values[first.key])
+        assertEquals(listOf(first.key to "old-first"), captured)
+    }
+
+    @Test
+    fun readBackMismatchRetriesThenRollsBack() = runTest {
+        val values = mutableMapOf<String, String?>(first.key to "old-first")
+        var writes = 0
+        val backend = object : SettingsBackend {
+            override fun read(spec: SettingSpec) = OperationResult.Success(values[spec.key])
+
+            override suspend fun write(spec: SettingSpec, value: String?): OperationResult<Unit> {
+                writes += 1
+                if (value == "old-first") {
+                    values[spec.key] = value
+                }
+                return OperationResult.Success(Unit)
+            }
+
+            override fun canWrite(spec: SettingSpec) = true
+        }
+
+        val result = TransactionCoordinator(backend).apply(
+            "test",
+            listOf(SettingMutation(first, "new-first")),
+        )
+
+        assertTrue(result is OperationResult.Failure)
+        assertEquals("old-first", values[first.key])
+        assertEquals(4, writes)
     }
 }

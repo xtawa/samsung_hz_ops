@@ -5,6 +5,7 @@ import android.content.Context
 import android.provider.Settings
 import com.xtawa.samsunghzops.core.model.OperationResult
 import com.xtawa.samsunghzops.core.model.SettingMutation
+import com.xtawa.samsunghzops.data.preferences.PreferencesRepository
 import com.xtawa.samsunghzops.core.transaction.TransactionCoordinator
 import com.xtawa.samsunghzops.data.settings.SettingsBackend
 import com.xtawa.samsunghzops.data.settings.SettingsFieldRegistry
@@ -16,6 +17,7 @@ class SystemFeatureRepository(
     context: Context,
     private val settings: SettingsBackend,
     private val transactions: TransactionCoordinator,
+    private val preferences: PreferencesRepository,
 ) {
     private val resolver: ContentResolver = context.applicationContext.contentResolver
 
@@ -83,6 +85,7 @@ class SystemFeatureRepository(
     suspend fun setSyncAutomatically(enabled: Boolean): OperationResult<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
+                preferences.captureMasterSyncIfMissing(ContentResolver.getMasterSyncAutomatically())
                 ContentResolver.setMasterSyncAutomatically(enabled)
                 OperationResult.Success(Unit)
             }.getOrElse { error ->

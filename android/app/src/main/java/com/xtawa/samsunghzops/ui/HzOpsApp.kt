@@ -47,6 +47,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -108,13 +110,54 @@ fun HzOpsApp(viewModel: MainViewModel) {
                 text = { Text(state.detailBody!!) },
             )
         }
+        if (state.showEmergencyResetConfirm) {
+            EmergencyResetDialog(
+                snapshotCount = state.managedSnapshotCount,
+                busy = state.busy,
+                onDismiss = viewModel::dismissEmergencyReset,
+                onConfirm = viewModel::confirmEmergencyReset,
+            )
+        }
         Scaffold(
             topBar = {
+                var expanded by remember { mutableStateOf(false) }
                 TopAppBar(
                     title = { Text("Samsung Hz Ops", fontWeight = FontWeight.SemiBold) },
                     actions = {
-                        IconButton(onClick = { viewModel.showDetails("当前实现", "原生 Compose Material 3；所有系统写入均经过能力检查与事务回滚。") }) {
-                            Icon(Icons.Default.Info, contentDescription = "关于")
+                        IconButton(onClick = { expanded = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "更多选项")
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text("重新读取设备状态") },
+                                leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                                onClick = {
+                                    expanded = false
+                                    viewModel.refreshCapabilities()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("紧急一键还原") },
+                                leadingIcon = { Icon(Icons.Default.Restore, contentDescription = null) },
+                                enabled = !state.busy,
+                                onClick = {
+                                    expanded = false
+                                    viewModel.requestEmergencyReset()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("查看诊断") },
+                                leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                                onClick = {
+                                    expanded = false
+                                    viewModel.showDetails(
+                                        "诊断日志",
+                                        state.journal.take(10).joinToString("\n") { record ->
+                                            "${if (record.committed) "✓" else "!"} ${record.operation}${record.error?.let { ": $it" } ?: ""}"
+                                        }.ifBlank { "还没有事务记录" },
+                                    )
+                                },
+                            )
                         }
                     },
                 )
@@ -229,14 +272,40 @@ private fun ControlPage(
         item {
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
-                onClick = viewModel::resetDefaults,
+                enabled = !state.busy,
+                onClick = viewModel::requestEmergencyReset,
             ) {
                 Icon(Icons.Default.Restore, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("恢复系统默认")
+                Text("紧急一键还原所有更改")
             }
         }
     }
+}
+
+@Composable
+private fun EmergencyResetDialog(
+    snapshotCount: Int,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Restore, contentDescription = null) },
+        title = { Text("紧急一键还原所有更改") },
+        text = {
+            Text(
+                "将停止本 App 的自动化和监视器，并把已记录的 $snapshotCount 项系统设置恢复到接管前状态。不会关闭系统省电模式，也不会删除你的应用规则。",
+            )
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("取消") }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm, enabled = !busy) { Text("立即还原") }
+        },
+    )
 }
 
 @Composable
@@ -470,7 +539,13 @@ private fun MorePage(state: MainUiState, viewModel: MainViewModel, padding: Padd
         item { ToolInfoRow("快捷方式与 QS Tile", "刷新率模式磁贴已注册；可从 More 中将其加入系统面板", Icons.Default.Tune) { viewModel.showDetails("QS Tile", "RefreshModeTileService 会读取当前策略并循环切换 Standard/Adaptive/Maximum。") } }
         item { ToolInfoRow("主题与语言", "Material 3 动态取色；跟随系统深色模式与语言", Icons.Default.Language) { viewModel.showDetails("主题与语言", "当前使用系统动态颜色与系统 locale；自定义偏好存储接口已预留。") } }
         item { ToolInfoRow("诊断日志", "最近 ${state.journal.size} 次事务；包含失败原因与回滚记录", Icons.Default.Info) { viewModel.showDetails("诊断日志", state.journal.take(10).joinToString("\n") { record -> "${if (record.committed) "✓" else "!"} ${record.operation}${record.error?.let { ": $it" } ?: ""}" }.ifBlank { "还没有事务记录" }) } }
-        item { ToolInfoRow("恢复全部默认", "清除刷新率覆盖并停止自动化服务", Icons.Default.Restore) { viewModel.resetDefaults() } }
+        item {
+            ToolInfoRow(
+                "紧急一键还原所有更改",
+                "停止自动化/监视器，并恢复 ${state.managedSnapshotCount} 项已记录系统设置",
+                Icons.Default.Restore,
+            ) { viewModel.requestEmergencyReset() }
+        }
         item {
             Text("Samsung Hz Ops · 原生实现 0.1.0", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

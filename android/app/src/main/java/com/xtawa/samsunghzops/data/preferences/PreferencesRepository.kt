@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.xtawa.samsunghzops.core.model.RefreshMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.hzOpsDataStore by preferencesDataStore(name = "hz_ops_preferences")
@@ -20,6 +21,8 @@ class PreferencesRepository(private val context: Context) {
         val batteryProtectEnabled = booleanPreferencesKey("battery_protect_enabled")
         val networkSpeedEnabled = booleanPreferencesKey("network_speed_enabled")
         val sensorsOffEnabled = booleanPreferencesKey("sensors_off_enabled")
+        val masterSyncSnapshotCaptured = booleanPreferencesKey("master_sync_snapshot_captured")
+        val masterSyncOriginal = booleanPreferencesKey("master_sync_original")
         val themeMode = stringPreferencesKey("theme_mode")
         val language = stringPreferencesKey("language")
     }
@@ -64,6 +67,27 @@ class PreferencesRepository(private val context: Context) {
 
     suspend fun setSensorsOffEnabled(enabled: Boolean) = context.hzOpsDataStore.edit {
         it[Keys.sensorsOffEnabled] = enabled
+    }
+
+    suspend fun captureMasterSyncIfMissing(enabled: Boolean) = context.hzOpsDataStore.edit {
+        if (it[Keys.masterSyncSnapshotCaptured] != true) {
+            it[Keys.masterSyncSnapshotCaptured] = true
+            it[Keys.masterSyncOriginal] = enabled
+        }
+    }
+
+    suspend fun originalMasterSync(): Boolean? {
+        val preferences = context.hzOpsDataStore.data.first()
+        return if (preferences[Keys.masterSyncSnapshotCaptured] == true) {
+            preferences[Keys.masterSyncOriginal] ?: true
+        } else {
+            null
+        }
+    }
+
+    suspend fun clearMasterSyncSnapshot() = context.hzOpsDataStore.edit {
+        it.remove(Keys.masterSyncSnapshotCaptured)
+        it.remove(Keys.masterSyncOriginal)
     }
 
     suspend fun setThemeMode(mode: String) = context.hzOpsDataStore.edit {

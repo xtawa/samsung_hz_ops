@@ -2,10 +2,12 @@ package com.xtawa.samsunghzops
 
 import android.app.Application
 import androidx.room.Room
+import com.xtawa.samsunghzops.core.recovery.EmergencyResetUseCase
 import com.xtawa.samsunghzops.core.state.DeviceStateRepository
 import com.xtawa.samsunghzops.data.capability.CapabilityProbe
 import com.xtawa.samsunghzops.data.preferences.PreferencesRepository
 import com.xtawa.samsunghzops.data.profile.AppProfileRepository
+import com.xtawa.samsunghzops.data.profile.ManagedSettingSnapshotRepository
 import com.xtawa.samsunghzops.data.profile.ProfileDatabase
 import com.xtawa.samsunghzops.data.profile.TransactionJournalRepository
 import com.xtawa.samsunghzops.data.refresh.RefreshRateRepository
@@ -39,15 +41,28 @@ class HzOpsContainer(application: Application) {
         appContext,
         ProfileDatabase::class.java,
         "hz_ops_profiles.db",
-    ).build()
+    ).addMigrations(ProfileDatabase.MIGRATION_1_2).build()
     val transactionJournal = TransactionJournalRepository(profileDatabase.transactionDao())
-    val transactions = TransactionCoordinator(settingsBackend, transactionJournal::append)
+    val managedSettings = ManagedSettingSnapshotRepository(profileDatabase.managedSettingSnapshotDao())
+    val transactions = TransactionCoordinator(
+        backend = settingsBackend,
+        journalSink = transactionJournal::append,
+        managedSnapshotSink = managedSettings::captureIfMissing,
+    )
     val refreshRates = RefreshRateRepository(appContext, transactions)
     val powerSave = SamsungPowerSaveBackend(appContext, settingsBackend, transactions)
-    val systemFeatures = SystemFeatureRepository(appContext, settingsBackend, transactions)
+    val systemFeatures = SystemFeatureRepository(appContext, settingsBackend, transactions, preferences)
     val policy = RefreshPolicyEngine()
     val capabilityProbe = CapabilityProbe(appContext, privilegedWriter)
     val profiles = AppProfileRepository(profileDatabase.profileDao())
+    val emergencyReset = EmergencyResetUseCase(
+        context = appContext,
+        preferences = preferences,
+        managedSettings = managedSettings,
+        transactions = transactions,
+        refreshRates = refreshRates,
+        powerSave = powerSave,
+    )
 
     init {
         scope.launch {

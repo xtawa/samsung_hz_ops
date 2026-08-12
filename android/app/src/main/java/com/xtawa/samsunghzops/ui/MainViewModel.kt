@@ -53,6 +53,8 @@ data class MainUiState(
     val networkSpeedEnabled: Boolean = false,
     val forceResizableEnabled: Boolean = false,
     val syncEnabled: Boolean = true,
+    val managedSnapshotCount: Int = 0,
+    val showEmergencyResetConfirm: Boolean = false,
     val detailTitle: String? = null,
     val detailBody: String? = null,
     val snackbar: String? = null,
@@ -94,6 +96,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             container.transactionJournal.recent.collect { records ->
                 update { it.copy(journal = records) }
+            }
+        }
+        viewModelScope.launch {
+            container.managedSettings.snapshots.collect { snapshots ->
+                update { it.copy(managedSnapshotCount = snapshots.size) }
             }
         }
         viewModelScope.launch {
@@ -151,7 +158,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setKeepHighRefresh(enabled: Boolean) = runOperation {
-        container.powerSave.setKeepHighRefresh(enabled)
+        val result = container.powerSave.setKeepHighRefresh(enabled)
+        if (result is OperationResult.Success) container.preferences.setPsmHighRefreshEnabled(enabled)
+        result
     }
 
     fun setAutomationEnabled(enabled: Boolean) = runOperation {
@@ -234,8 +243,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         container.profiles.delete(profile).let { OperationResult.Success(Unit) }
     }
 
-    fun resetDefaults() = runOperation {
-        container.refreshRates.resetToSystemDefault()
+    fun resetDefaults() {
+        requestEmergencyReset()
+    }
+
+    fun requestEmergencyReset() = update { it.copy(showEmergencyResetConfirm = true) }
+
+    fun dismissEmergencyReset() = update { it.copy(showEmergencyResetConfirm = false) }
+
+    fun confirmEmergencyReset() {
+        viewModelScope.launch {
+            update { it.copy(busy = true, showEmergencyResetConfirm = false) }
+            val result = try {
+                container.emergencyReset.resetAll()
+            } catch (error: Throwable) {
+                OperationResult.Failure("紧急还原失败：${error.message ?: error.javaClass.simpleName}")
+            }
+            update { state ->
+                state.copy(
+                    busy = false,
+                    snackbar = when (result) {
+                        is OperationResult.Success -> {
+                            val report = result.value
+                            buildString {
+                                append("已还原 ${report.restoredSettings} 项系统设置并停止自动化")
+                                if (report.warnings.isNotEmpty()) append("；${report.warnings.first()}")
+                            }
+                        }
+
+                        is OperationResult.Failure -> result.message
+                    },
+                )
+            }
+            refreshCapabilities()
+        }
     }
 
     fun refreshCapabilities() {

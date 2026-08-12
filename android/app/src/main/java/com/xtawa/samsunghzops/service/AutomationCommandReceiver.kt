@@ -52,7 +52,7 @@ class AutomationCommandReceiver : BroadcastReceiver() {
                             )
                         }
                     }
-                    ACTION_RESET -> application.container.refreshRates.resetToSystemDefault()
+                    ACTION_RESET -> application.container.emergencyReset.resetAll()
                 }
             } finally {
                 pendingResult.finish()

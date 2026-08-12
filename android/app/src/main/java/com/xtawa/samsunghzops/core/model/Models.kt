@@ -79,6 +79,19 @@ data class RefreshSnapshot(
     val lastError: String? = null,
 )
 
+data class ManagedSettingSnapshot(
+    val spec: SettingSpec,
+    val originalValue: String?,
+    val capturedAt: Instant,
+    val lastTouchedAt: Instant,
+)
+
+data class EmergencyResetReport(
+    val restoredSettings: Int,
+    val stoppedServices: List<String>,
+    val warnings: List<String> = emptyList(),
+)
+
 data class DeviceState(
     val foregroundPackage: String? = null,
     val isInteractive: Boolean = true,
