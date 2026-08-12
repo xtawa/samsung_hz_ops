@@ -260,7 +260,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun <T> runOperation(block: suspend () -> OperationResult<T>) {
         viewModelScope.launch {
             update { it.copy(busy = true) }
-            val result = runCatching { block() }.getOrElse { error ->
+            val result = try {
+                block()
+            } catch (error: Throwable) {
                 OperationResult.Failure("操作失败：${error.message ?: error.javaClass.simpleName}")
             }
             update { state ->

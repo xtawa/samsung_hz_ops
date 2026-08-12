@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class RefreshRateRepository(
     context: Context,
     private val transactions: TransactionCoordinator,
+    private val samsungModeMapping: SamsungModeMapping = SamsungModeMapping(),
 ) {
     private val appContext = context.applicationContext
     private val displayManager = appContext.getSystemService(DisplayManager::class.java)
@@ -107,27 +108,45 @@ class RefreshRateRepository(
         if (range == null) {
             return OperationResult.Failure("设备尚未报告可用刷新率")
         }
-        val mutations = listOf(
+        val mutations = buildList {
+            samsungModeMapping.valueFor(mode)?.let { modeValue ->
+                add(
+                    SettingMutation(
+                        spec = SettingsFieldRegistry.refreshRateMode,
+                        value = modeValue,
+                    ),
+                )
+            }
+            add(
             SettingMutation(
                 spec = SettingsFieldRegistry.minRefreshRate,
                 value = formatHz(range.minHz),
             ),
+            )
+            add(
             SettingMutation(
                 spec = SettingsFieldRegistry.peakRefreshRate,
                 value = formatHz(range.maxHz),
             ),
-        )
+            )
+        }
         val result = transactions.apply(
             operation = "刷新率：${mode.name.lowercase(Locale.ROOT)}（$reason）",
             requestedMutations = mutations,
         )
         if (result is OperationResult.Success) {
+            val warnings = if (samsungModeMapping.valueFor(mode) == null) {
+                listOf("未写入三星 refresh_rate_mode：需要目标机校准映射")
+            } else {
+                emptyList()
+            }
             _snapshot.value = _snapshot.value.copy(
                 activeMode = mode,
                 range = range,
                 lastAppliedAt = Instant.now(),
                 lastError = null,
             )
+            return OperationResult.Success(Unit, warnings)
         } else if (result is OperationResult.Failure) {
             _snapshot.value = _snapshot.value.copy(lastError = result.message)
         }
@@ -137,10 +156,16 @@ class RefreshRateRepository(
     suspend fun resetToSystemDefault(): OperationResult<Unit> {
         val result = transactions.reset(
             operation = "恢复系统默认刷新率",
-            specs = listOf(
-                SettingsFieldRegistry.minRefreshRate,
-                SettingsFieldRegistry.peakRefreshRate,
-            ),
+            specs = buildList {
+                add(SettingsFieldRegistry.minRefreshRate)
+                add(SettingsFieldRegistry.peakRefreshRate)
+                if (samsungModeMapping.standard != null ||
+                    samsungModeMapping.adaptive != null ||
+                    samsungModeMapping.maximum != null
+                ) {
+                    add(SettingsFieldRegistry.refreshRateMode)
+                }
+            },
         )
         refresh()
         return result
@@ -148,4 +173,17 @@ class RefreshRateRepository(
 
     private fun formatHz(value: Float): String =
         String.format(Locale.US, "%.1f", value)
+}
+
+/** Numeric Samsung mode values vary by One UI/device; keep them injectable. */
+data class SamsungModeMapping(
+    val standard: String? = null,
+    val adaptive: String? = null,
+    val maximum: String? = null,
+) {
+    fun valueFor(mode: RefreshMode): String? = when (mode) {
+        RefreshMode.STANDARD -> standard
+        RefreshMode.ADAPTIVE -> adaptive
+        RefreshMode.MAXIMUM -> maximum
+    }
 }

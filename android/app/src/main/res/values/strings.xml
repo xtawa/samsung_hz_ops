@@ -1,4 +1,10 @@
 <resources>
     <string name="app_name">Samsung Hz Ops</string>
     <string name="accessibility_service_description">仅用于识别前台应用和交互事件，以应用刷新率规则；不会读取输入内容。</string>
+    <string name="shortcut_adaptive_short">自适应刷新率</string>
+    <string name="shortcut_adaptive_long">开启自适应刷新率</string>
+    <string name="shortcut_standard_short">固定 60 Hz</string>
+    <string name="shortcut_standard_long">固定标准 60 Hz</string>
+    <string name="shortcut_maximum_short">最高刷新率</string>
+    <string name="shortcut_maximum_long">开启最高刷新率</string>
 </resources>

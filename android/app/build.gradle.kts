@@ -60,6 +60,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     // Shizuku is used only through the privilege adapter; the app remains usable read-only without it.
     implementation("dev.rikka.shizuku:api:13.1.5")

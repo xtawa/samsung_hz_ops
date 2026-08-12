@@ -105,7 +105,10 @@ class CapabilityProbe(
 
     private fun isAccessibilityEnabled(): Boolean {
         val manager = context.getSystemService(AccessibilityManager::class.java) ?: return false
-        val expected = ComponentName(context, "${context.packageName}.service.HzAccessibilityService")
+        val expected = ComponentName(
+            context.packageName,
+            "${context.packageName}.service.HzAccessibilityService",
+        )
         return manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
             .any { info ->
                 val serviceInfo = info.resolveInfo?.serviceInfo ?: return@any false

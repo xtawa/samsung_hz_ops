@@ -124,6 +124,11 @@ class TransactionCoordinator(
 
     private suspend fun append(record: TransactionRecord) {
         _journal.value = (_journal.value + record).takeLast(50)
-        runCatching { journalSink(record) }
+        try {
+            journalSink(record)
+        } catch (_: Throwable) {
+            // A diagnostics sink must never turn a committed system mutation
+            // into a false failure; the in-memory journal remains available.
+        }
     }
 }

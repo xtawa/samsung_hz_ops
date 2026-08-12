@@ -3,8 +3,8 @@
         android:shortcutId="adaptive"
         android:enabled="true"
         android:icon="@android:drawable/ic_menu_manage"
-        android:shortcutShortLabel="自适应刷新率"
-        android:shortcutLongLabel="开启自适应刷新率">
+        android:shortcutShortLabel="@string/shortcut_adaptive_short"
+        android:shortcutLongLabel="@string/shortcut_adaptive_long">
         <intent
             android:action="android.intent.action.VIEW"
             android:targetPackage="com.xtawa.samsunghzops"
@@ -16,8 +16,8 @@
         android:shortcutId="standard"
         android:enabled="true"
         android:icon="@android:drawable/ic_menu_manage"
-        android:shortcutShortLabel="固定 60 Hz"
-        android:shortcutLongLabel="固定标准 60 Hz">
+        android:shortcutShortLabel="@string/shortcut_standard_short"
+        android:shortcutLongLabel="@string/shortcut_standard_long">
         <intent
             android:action="android.intent.action.VIEW"
             android:targetPackage="com.xtawa.samsunghzops"
@@ -29,8 +29,8 @@
         android:shortcutId="maximum"
         android:enabled="true"
         android:icon="@android:drawable/ic_menu_manage"
-        android:shortcutShortLabel="最高刷新率"
-        android:shortcutLongLabel="开启最高刷新率">
+        android:shortcutShortLabel="@string/shortcut_maximum_short"
+        android:shortcutLongLabel="@string/shortcut_maximum_long">
         <intent
             android:action="android.intent.action.VIEW"
             android:targetPackage="com.xtawa.samsunghzops"
