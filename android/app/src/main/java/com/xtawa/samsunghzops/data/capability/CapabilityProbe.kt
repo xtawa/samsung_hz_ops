@@ -23,12 +23,14 @@ class CapabilityProbe(
         val privilege = privilegedWriter.statusSnapshot()
         val privilegedExplanation = when {
             privilege.writeSecureSettingsGranted -> "已获得 WRITE_SECURE_SETTINGS，可直接写入 Secure/Global 设置"
+            !privilege.shizukuInstalled -> "未安装 Shizuku；可用 ADB 手动授权或先安装 Shizuku"
             !privilege.binderAlive -> "Shizuku 未运行；请先启动 Shizuku 服务"
             !privilege.shizukuPermissionGranted -> "Shizuku 已连接；需要授权 Samsung Hz Ops"
             else -> "Shizuku 已授权；点击授予 WRITE_SECURE_SETTINGS"
         }
         val privilegedAction = when {
             privilege.writeSecureSettingsGranted -> null
+            !privilege.shizukuInstalled -> "安装说明"
             !privilege.binderAlive -> "打开 Shizuku"
             !privilege.shizukuPermissionGranted -> "授权"
             else -> "授予安全设置"
@@ -68,8 +70,9 @@ class CapabilityProbe(
                 else CapabilityState.USER_ACTION_REQUIRED,
                 when {
                     privilege.canUseShizukuShell -> "Shizuku 已连接并授权"
+                    !privilege.shizukuInstalled -> "未安装 Shizuku"
                     !privilege.binderAlive -> "未检测到 Shizuku binder"
-                    else -> "Shizuku 已连接，等待 App 授权"
+                    else -> "Shizuku 已连接，等待 App 授权${privilege.shizukuVersionName?.let { "（$it）" } ?: ""}"
                 },
                 actionLabel = if (privilege.canUseShizukuShell) null else privilegedAction,
             ),

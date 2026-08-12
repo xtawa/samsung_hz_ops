@@ -71,8 +71,17 @@ class SamsungPowerSaveBackend(
     fun close() = runCatching { appContext.unregisterReceiver(receiver) }
 
     fun refresh() {
+        val enabledValue = when (val result = settings.read(SettingsFieldRegistry.psmRefreshRateEnabled)) {
+            is OperationResult.Success -> result.value
+            is OperationResult.Failure -> null
+        }
+        val tagValue = when (val result = settings.read(SettingsFieldRegistry.psmRefreshRateTag)) {
+            is OperationResult.Success -> result.value
+            is OperationResult.Failure -> null
+        }
         _state.value = _state.value.copy(
             powerSaveMode = powerManager?.isPowerSaveMode == true,
+            keepHighRefresh = enabledValue == mapping.enabledValue || tagValue == mapping.highRefreshTag,
             mappingConfidence = mapping.confidence,
             lastError = null,
         )
@@ -112,10 +121,13 @@ class SamsungPowerSaveBackend(
             operation = if (enabled) "开启省电模式保持高刷" else "关闭省电模式保持高刷",
             requestedMutations = mutations,
         )
-        _state.value = _state.value.copy(
-            keepHighRefresh = if (result is OperationResult.Success) enabled else _state.value.keepHighRefresh,
-            lastError = (result as? OperationResult.Failure)?.message,
-        )
+        if (result is OperationResult.Success) {
+            refresh()
+        } else {
+            _state.value = _state.value.copy(
+                lastError = (result as OperationResult.Failure).message,
+            )
+        }
         return result
     }
 

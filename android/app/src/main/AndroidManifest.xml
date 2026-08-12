@@ -1,5 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
+
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <!-- ADB/Shizuku grants this signature permission explicitly; Android never prompts for it. -->
     <uses-permission
