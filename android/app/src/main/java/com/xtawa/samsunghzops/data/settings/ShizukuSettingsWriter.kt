@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.provider.Settings
 import com.xtawa.samsunghzops.core.model.OperationResult
 import com.xtawa.samsunghzops.core.model.SettingNamespace
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,8 @@ import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 
 data class PrivilegedBackendStatus(
+    val shizukuInstalled: Boolean = false,
+    val shizukuVersionName: String? = null,
     val binderAlive: Boolean = false,
     val shizukuPermissionGranted: Boolean = false,
     val writeSecureSettingsGranted: Boolean = false,
@@ -30,7 +33,8 @@ data class PrivilegedBackendStatus(
 /**
  * Settings CLI bridge used when the user explicitly grants Shizuku access.
  * It intentionally accepts only the namespace/key/value supplied by the
- * registry and shell-quotes all user-controlled text.
+ * registry and invokes Shizuku with fixed argument arrays instead of a shell
+ * string.
  */
 class ShizukuSettingsWriter(
     context: Context,
@@ -81,7 +85,14 @@ class ShizukuSettingsWriter(
         val current = readStatus()
         if (current.writeSecureSettingsGranted) {
             pendingGrantPackage.set(null)
-            return OperationResult.Success(Unit, listOf("安全设置权限已就绪"))
+            return when (val validation = validateDirectSettingsWrite()) {
+                is OperationResult.Success -> OperationResult.Success(Unit, listOf("安全设置权限已就绪"))
+                is OperationResult.Failure -> validation
+            }
+        }
+        if (!current.shizukuInstalled) {
+            pendingGrantPackage.set(null)
+            return OperationResult.Failure("未安装 Shizuku；请先安装 Shizuku 并启动服务")
         }
         if (!current.binderAlive) {
             pendingGrantPackage.set(packageName)
@@ -97,13 +108,15 @@ class ShizukuSettingsWriter(
         }
 
         pendingGrantPackage.set(packageName)
-        val command = "pm grant ${shellQuote(packageName)} android.permission.WRITE_SECURE_SETTINGS"
-        return when (val result = runShell(command)) {
+        return when (val result = runShizukuCommand("授予 WRITE_SECURE_SETTINGS", "pm", "grant", packageName, Manifest.permission.WRITE_SECURE_SETTINGS)) {
             is OperationResult.Success -> {
                 refreshStatus("已通过 Shizuku 授予安全设置权限")
                 pendingGrantPackage.set(null)
                 if (hasWriteSecureSettingsPermission()) {
-                    OperationResult.Success(Unit, listOf("安全设置权限已授予"))
+                    when (val validation = validateDirectSettingsWrite()) {
+                        is OperationResult.Success -> OperationResult.Success(Unit, listOf("安全设置权限已授予并通过写入验证"))
+                        is OperationResult.Failure -> validation
+                    }
                 } else {
                     OperationResult.Failure("pm grant 已执行，但系统未确认 WRITE_SECURE_SETTINGS")
                 }
@@ -148,13 +161,12 @@ class ShizukuSettingsWriter(
             SettingNamespace.GLOBAL -> "global"
             else -> error("validated above")
         }
-        val command = if (value == null) {
-            "settings delete $table ${shellQuote(key)}"
-        } else {
-            "settings put $table ${shellQuote(key)} ${shellQuote(value)}"
-        }
 
-        return runShell(command)
+        return if (value == null) {
+            runShizukuCommand("删除 $key", "settings", "delete", table, key)
+        } else {
+            runShizukuCommand("写入 $key", "settings", "put", table, key, value)
+        }
     }
 
     private fun requestShizukuPermission(): OperationResult<Unit> = runCatching {
@@ -165,7 +177,7 @@ class ShizukuSettingsWriter(
         OperationResult.Failure("请求 Shizuku 授权失败：${error.message ?: error.javaClass.simpleName}")
     }
 
-    private suspend fun runShell(command: String): OperationResult<Unit> = withContext(Dispatchers.IO) {
+    private suspend fun runShizukuCommand(label: String, vararg args: String): OperationResult<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             // Shizuku 13 exposes this bridge with different visibility
             // across API artifacts. Resolve it only after the user has
@@ -176,11 +188,24 @@ class ShizukuSettingsWriter(
                 Array<String>::class.java,
                 String::class.java,
             ).apply { isAccessible = true }
-            val process = method.invoke(null, arrayOf("sh", "-c", command), null, null) as? Process
+            val process = method.invoke(null, args.toList().toTypedArray(), null, null) as? Process
                 ?: return@runCatching OperationResult.Failure("Shizuku newProcess 不可用")
-            val exitCode = process.waitFor()
+            val completed = process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            if (!completed) {
+                process.destroy()
+                return@runCatching OperationResult.Failure("Shizuku 命令超时：$label")
+            }
+            val exitCode = process.exitValue()
             if (exitCode != 0) {
-                OperationResult.Failure("Shizuku 命令失败（exit=$exitCode）")
+                val stderr = process.errorStream.bufferedReader().readText().trimForUser()
+                val stdout = process.inputStream.bufferedReader().readText().trimForUser()
+                OperationResult.Failure(
+                    buildString {
+                        append("Shizuku 命令失败：$label（exit=$exitCode）")
+                        if (stderr.isNotBlank()) append("；$stderr")
+                        else if (stdout.isNotBlank()) append("；$stdout")
+                    },
+                )
             } else {
                 OperationResult.Success(Unit)
             }
@@ -190,6 +215,7 @@ class ShizukuSettingsWriter(
     }
 
     private fun readStatus(message: String? = null): PrivilegedBackendStatus {
+        val shizukuPackage = shizukuPackageInfo()
         val binderAlive = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
         val shizukuPermissionGranted = if (binderAlive) {
             runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
@@ -197,6 +223,8 @@ class ShizukuSettingsWriter(
             false
         }
         return PrivilegedBackendStatus(
+            shizukuInstalled = shizukuPackage != null,
+            shizukuVersionName = shizukuPackage?.versionName,
             binderAlive = binderAlive,
             shizukuPermissionGranted = shizukuPermissionGranted,
             writeSecureSettingsGranted = hasWriteSecureSettingsPermission(),
@@ -212,10 +240,46 @@ class ShizukuSettingsWriter(
         appContext.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) ==
             PackageManager.PERMISSION_GRANTED
 
-    private fun shellQuote(value: String): String =
-        "'" + value.replace("'", "'\\''") + "'"
+    private fun shizukuPackageInfo() = runCatching {
+        @Suppress("DEPRECATION")
+        appContext.packageManager.getPackageInfo(SHIZUKU_PACKAGE, 0)
+    }.getOrNull()
+
+    private fun validateDirectSettingsWrite(): OperationResult<Unit> {
+        if (!hasWriteSecureSettingsPermission()) {
+            return OperationResult.Failure("系统未确认 WRITE_SECURE_SETTINGS")
+        }
+        return runCatching {
+            val resolver = appContext.contentResolver
+            val previous = Settings.Global.getString(resolver, VALIDATION_KEY)
+            val probeValue = "probe:${System.currentTimeMillis()}"
+            if (!Settings.Global.putString(resolver, VALIDATION_KEY, probeValue)) {
+                return OperationResult.Failure("WRITE_SECURE_SETTINGS 已授予，但 Settings 写入测试被系统拒绝")
+            }
+            val readBack = Settings.Global.getString(resolver, VALIDATION_KEY)
+            Settings.Global.putString(resolver, VALIDATION_KEY, previous)
+            val restoredValue = Settings.Global.getString(resolver, VALIDATION_KEY)
+            if (readBack != probeValue) {
+                OperationResult.Failure("WRITE_SECURE_SETTINGS 写入测试读回不一致")
+            } else if (restoredValue != previous) {
+                OperationResult.Failure("WRITE_SECURE_SETTINGS 写入测试成功，但清理测试键失败")
+            } else {
+                OperationResult.Success(Unit)
+            }
+        }.getOrElse { error ->
+            OperationResult.Failure("WRITE_SECURE_SETTINGS 写入测试失败：${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    private fun String.trimForUser(limit: Int = 180): String {
+        val normalized = replace('\n', ' ').trim()
+        return if (normalized.length <= limit) normalized else normalized.take(limit) + "…"
+    }
 
     private companion object {
         const val REQUEST_CODE_SHIZUKU_PERMISSION = 4201
+        const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
+        const val COMMAND_TIMEOUT_SECONDS = 15L
+        const val VALIDATION_KEY = "samsung_hz_ops_privileged_write_probe"
     }
 }

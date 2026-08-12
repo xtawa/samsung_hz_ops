@@ -1,12 +1,17 @@
 package com.xtawa.samsunghzops.data.refresh
 
 import android.content.BroadcastReceiver
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.database.ContentObserver
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
+import android.provider.Settings
 import android.view.Display
 import androidx.core.content.ContextCompat
 import com.xtawa.samsunghzops.core.model.DisplayModeInfo
@@ -34,6 +39,7 @@ class RefreshRateRepository(
     private val samsungModeMapping: SamsungModeMapping = SamsungModeMapping(),
 ) {
     private val appContext = context.applicationContext
+    private val resolver: ContentResolver = appContext.contentResolver
     private val displayManager = appContext.getSystemService(DisplayManager::class.java)
     private val powerManager = appContext.getSystemService(PowerManager::class.java)
     private val _snapshot = MutableStateFlow(RefreshSnapshot())
@@ -51,8 +57,22 @@ class RefreshRateRepository(
         }
     }
 
+    private val settingsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = refresh()
+    }
+
     init {
         displayManager?.registerDisplayListener(displayListener, null)
+        resolver.registerContentObserver(
+            Settings.System.getUriFor(SettingsFieldRegistry.minRefreshRate.key),
+            false,
+            settingsObserver,
+        )
+        resolver.registerContentObserver(
+            Settings.System.getUriFor(SettingsFieldRegistry.peakRefreshRate.key),
+            false,
+            settingsObserver,
+        )
         ContextCompat.registerReceiver(
             appContext,
             powerReceiver,
@@ -64,6 +84,7 @@ class RefreshRateRepository(
 
     fun close() {
         displayManager?.unregisterDisplayListener(displayListener)
+        resolver.unregisterContentObserver(settingsObserver)
         runCatching { appContext.unregisterReceiver(powerReceiver) }
     }
 
@@ -83,9 +104,11 @@ class RefreshRateRepository(
             )
         }.orEmpty()
         val activeRate = display?.mode?.refreshRate
+        val settingsRange = readSettingsRange(modes)
         _snapshot.value = _snapshot.value.copy(
             activeRefreshRateHz = activeRate,
             supportedModes = modes,
+            range = settingsRange ?: _snapshot.value.range,
             isPowerSaveMode = powerManager?.isPowerSaveMode == true,
             lastError = null,
         )
@@ -118,16 +141,16 @@ class RefreshRateRepository(
                 )
             }
             add(
-            SettingMutation(
-                spec = SettingsFieldRegistry.minRefreshRate,
-                value = formatHz(range.minHz),
-            ),
+                SettingMutation(
+                    spec = SettingsFieldRegistry.minRefreshRate,
+                    value = formatHz(range.minHz),
+                ),
             )
             add(
-            SettingMutation(
-                spec = SettingsFieldRegistry.peakRefreshRate,
-                value = formatHz(range.maxHz),
-            ),
+                SettingMutation(
+                    spec = SettingsFieldRegistry.peakRefreshRate,
+                    value = formatHz(range.maxHz),
+                ),
             )
         }
         val result = transactions.apply(
@@ -173,6 +196,26 @@ class RefreshRateRepository(
 
     private fun formatHz(value: Float): String =
         String.format(Locale.US, "%.1f", value)
+
+    private fun readSettingsRange(modes: List<DisplayModeInfo>): RefreshRange? {
+        val min = Settings.System.getString(resolver, SettingsFieldRegistry.minRefreshRate.key)
+            ?.toFloatOrNull()
+        val peak = Settings.System.getString(resolver, SettingsFieldRegistry.peakRefreshRate.key)
+            ?.toFloatOrNull()
+        if (min == null && peak == null) return null
+        val supportedHz = modes.map { it.refreshRateHz }.filter { it.isFinite() && it > 0f }
+        val fallbackMin = supportedHz.minOrNull() ?: min ?: return null
+        val fallbackMax = supportedHz.maxOrNull() ?: peak ?: return null
+        val resolvedMin = nearestSupportedHz(min ?: fallbackMin, supportedHz)
+        val resolvedMax = nearestSupportedHz(peak ?: fallbackMax, supportedHz)
+        return RefreshRange(
+            minHz = resolvedMin.coerceAtMost(resolvedMax),
+            maxHz = resolvedMax.coerceAtLeast(resolvedMin),
+        )
+    }
+
+    private fun nearestSupportedHz(value: Float, supportedHz: List<Float>): Float =
+        supportedHz.minByOrNull { kotlin.math.abs(it - value) } ?: value
 }
 
 /** Numeric Samsung mode values vary by One UI/device; keep them injectable. */
