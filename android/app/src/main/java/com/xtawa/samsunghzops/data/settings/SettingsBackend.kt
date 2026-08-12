@@ -27,6 +27,8 @@ interface SettingsBackend {
 interface PrivilegedSettingsWriter {
     fun isAvailable(): Boolean
 
+    fun statusSnapshot(): PrivilegedBackendStatus = PrivilegedBackendStatus()
+
     suspend fun put(namespace: SettingNamespace, key: String, value: String?): OperationResult<Unit>
 }
 

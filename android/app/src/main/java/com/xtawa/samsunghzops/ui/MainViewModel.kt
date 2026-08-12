@@ -123,6 +123,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 update { it.copy(sensorsOffEnabled = enabled) }
             }
         }
+        viewModelScope.launch {
+            container.privilegedWriter.status.collect {
+                refreshCapabilities()
+            }
+        }
     }
 
     fun selectDestination(destination: AppDestination) = update { it.copy(destination = destination) }
@@ -288,6 +293,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Uri.parse("package:${getApplication<Application>().packageName}"),
     )
 
+    fun openShizukuIntent(): Intent? =
+        getApplication<Application>().packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+
+    fun shouldOpenShizuku(): Boolean = !container.privilegedWriter.statusSnapshot().binderAlive
+
+    fun ensurePrivilegedSettingsAccess() = runOperation {
+        container.privilegedWriter.ensureWriteSecureSettingsGranted(getApplication<Application>().packageName)
+    }
+
     fun showDetails(title: String, body: String) = update {
         it.copy(detailTitle = title, detailBody = body)
     }
@@ -335,5 +349,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         RefreshMode.MAXIMUM -> modes.maxByOrNull { it.refreshRateHz }?.let {
             com.xtawa.samsunghzops.core.model.RefreshRange(it.refreshRateHz, it.refreshRateHz)
         }
+    }
+
+    private companion object {
+        const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
     }
 }

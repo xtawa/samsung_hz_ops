@@ -3,6 +3,10 @@
 package com.xtawa.samsunghzops.ui
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,7 +87,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtawa.samsunghzops.core.model.AppProfile
+import com.xtawa.samsunghzops.core.model.Capability
 import com.xtawa.samsunghzops.core.model.CapabilityState
+import com.xtawa.samsunghzops.core.model.CapabilityStatus
 import com.xtawa.samsunghzops.core.model.DisplayModeInfo
 import com.xtawa.samsunghzops.core.model.RefreshMode
 import com.xtawa.samsunghzops.core.model.RefreshRange
@@ -525,11 +531,7 @@ private fun MorePage(state: MainUiState, viewModel: MainViewModel, padding: Padd
                     }
                     state.capabilities.forEach { capability ->
                         CapabilityRow(capability) {
-                            if (capability.capability.name == "WRITE_SYSTEM_SETTINGS") {
-                                context.startActivity(viewModel.openWriteSettingsIntent())
-                            } else {
-                                viewModel.showDetails(capability.capability.name, capability.explanation)
-                            }
+                            handleCapabilityAction(capability, viewModel, context)
                         }
                     }
                 }
@@ -614,7 +616,7 @@ private fun ToolInfoRow(title: String, summary: String, icon: ImageVector, onCli
 }
 
 @Composable
-private fun CapabilityRow(capability: com.xtawa.samsunghzops.core.model.CapabilityStatus, onAction: () -> Unit) {
+private fun CapabilityRow(capability: CapabilityStatus, onAction: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Icon(
             if (capability.state == CapabilityState.GRANTED) Icons.Default.CheckCircle else Icons.Default.ErrorOutline,
@@ -628,4 +630,103 @@ private fun CapabilityRow(capability: com.xtawa.samsunghzops.core.model.Capabili
         }
         if (capability.actionLabel != null) TextButton(onClick = onAction) { Text(capability.actionLabel) }
     }
+}
+
+private fun handleCapabilityAction(
+    capability: CapabilityStatus,
+    viewModel: MainViewModel,
+    context: Context,
+) {
+    when (capability.capability) {
+        Capability.WRITE_SYSTEM_SETTINGS -> startSettingsActivity(
+            context = context,
+            intent = viewModel.openWriteSettingsIntent(),
+            viewModel = viewModel,
+            fallbackTitle = "修改系统设置",
+            fallbackBody = capability.explanation,
+        )
+
+        Capability.WRITE_SECURE_SETTINGS,
+        Capability.WRITE_GLOBAL_SETTINGS,
+        Capability.SHIZUKU,
+        -> {
+            if (viewModel.shouldOpenShizuku()) {
+                val shizukuIntent = viewModel.openShizukuIntent()
+                if (shizukuIntent == null) {
+                    viewModel.showDetails(
+                        "需要 Shizuku",
+                        "请先安装 Shizuku 并启动服务，然后回到 Samsung Hz Ops 点击“授权”。",
+                    )
+                } else {
+                    startSettingsActivity(
+                        context = context,
+                        intent = shizukuIntent,
+                        viewModel = viewModel,
+                        fallbackTitle = "打开 Shizuku",
+                        fallbackBody = "无法打开 Shizuku；请从桌面手动启动 Shizuku 并启动服务。",
+                    )
+                }
+            } else {
+                viewModel.ensurePrivilegedSettingsAccess()
+            }
+        }
+
+        Capability.ACCESSIBILITY -> startSettingsActivity(
+            context = context,
+            intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+            viewModel = viewModel,
+            fallbackTitle = "辅助功能",
+            fallbackBody = capability.explanation,
+        )
+
+        Capability.OVERLAY -> startSettingsActivity(
+            context = context,
+            intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${context.packageName}"),
+            ),
+            viewModel = viewModel,
+            fallbackTitle = "悬浮窗权限",
+            fallbackBody = capability.explanation,
+        )
+
+        Capability.NOTIFICATIONS -> startSettingsActivity(
+            context = context,
+            intent = notificationSettingsIntent(context),
+            viewModel = viewModel,
+            fallbackTitle = "通知权限",
+            fallbackBody = capability.explanation,
+        )
+
+        Capability.IGNORE_BATTERY_OPTIMIZATIONS -> startSettingsActivity(
+            context = context,
+            intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+            viewModel = viewModel,
+            fallbackTitle = "电池优化",
+            fallbackBody = capability.explanation,
+        )
+
+        Capability.READ_DISPLAY,
+        Capability.BATTERY_MANAGER,
+        -> viewModel.showDetails(capability.capability.name, capability.explanation)
+    }
+}
+
+private fun notificationSettingsIntent(context: Context): Intent =
+    if (Build.VERSION.SDK_INT >= 26) {
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+    } else {
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+    }
+
+private fun startSettingsActivity(
+    context: Context,
+    intent: Intent,
+    viewModel: MainViewModel,
+    fallbackTitle: String,
+    fallbackBody: String,
+) {
+    runCatching { context.startActivity(intent) }
+        .onFailure { viewModel.showDetails(fallbackTitle, fallbackBody) }
 }

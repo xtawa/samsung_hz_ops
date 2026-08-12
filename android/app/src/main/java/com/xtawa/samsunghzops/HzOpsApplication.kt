@@ -35,7 +35,7 @@ class HzOpsContainer(application: Application) {
     val preferences = PreferencesRepository(appContext)
     val deviceState = DeviceStateRepository()
     val signalMonitor = DeviceSignalMonitor(appContext, deviceState)
-    val privilegedWriter = ShizukuSettingsWriter()
+    val privilegedWriter = ShizukuSettingsWriter(appContext)
     val settingsBackend: SettingsBackend = AndroidSettingsBackend(appContext, privilegedWriter)
     val profileDatabase: ProfileDatabase = Room.databaseBuilder(
         appContext,
