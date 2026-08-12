@@ -42,7 +42,17 @@ class ShizukuSettingsWriter : PrivilegedSettingsWriter {
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+                // Shizuku 13 exposes this bridge with different visibility
+                // across API artifacts. Resolve it only after the user has
+                // granted Shizuku; an unavailable method is a safe failure.
+                val method = Shizuku::class.java.getDeclaredMethod(
+                    "newProcess",
+                    Array<String>::class.java,
+                    Array<String>::class.java,
+                    String::class.java,
+                ).apply { isAccessible = true }
+                val process = method.invoke(null, arrayOf("sh", "-c", command), null, null) as? Process
+                    ?: return@runCatching OperationResult.Failure("Shizuku newProcess 不可用")
                 val exitCode = process.waitFor()
                 if (exitCode != 0) {
                     OperationResult.Failure("settings 命令失败（exit=$exitCode）")
