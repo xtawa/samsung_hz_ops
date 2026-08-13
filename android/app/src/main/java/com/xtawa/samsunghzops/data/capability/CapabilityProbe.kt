@@ -22,19 +22,25 @@ class CapabilityProbe(
     fun snapshot(): List<CapabilityStatus> {
         val privilege = privilegedWriter.statusSnapshot()
         val privilegedExplanation = when {
+            privilege.canUseShizukuShell -> buildString {
+                append("Shizuku shell 已连接并授权")
+                privilege.shizukuUid?.let { append("（UID $it）") }
+            }
             privilege.writeSecureSettingsGranted -> "已获得 WRITE_SECURE_SETTINGS，可直接写入 Secure/Global 设置"
-            !privilege.shizukuInstalled -> "未安装 Shizuku；可用 ADB 手动授权或先安装 Shizuku"
+            !privilege.shizukuInstalled -> "未安装 Shizuku；请先安装并启动 Shizuku"
             !privilege.binderAlive -> "Shizuku 未运行；请先启动 Shizuku 服务"
             !privilege.shizukuPermissionGranted -> "Shizuku 已连接；需要授权 Samsung Hz Ops"
-            else -> "Shizuku 已授权；点击授予 WRITE_SECURE_SETTINGS"
+            else -> "Shizuku 已授权；可继续授予 WRITE_SECURE_SETTINGS 作为 Secure/Global 备用通道"
         }
         val privilegedAction = when {
+            privilege.canUseShizukuShell -> null
             privilege.writeSecureSettingsGranted -> null
             !privilege.shizukuInstalled -> "安装说明"
             !privilege.binderAlive -> "打开 Shizuku"
             !privilege.shizukuPermissionGranted -> "授权"
             else -> "授予安全设置"
         }
+        val canWriteRestrictedSystem = privilege.canUseShizukuShell
         return listOf(
             status(
                 Capability.READ_DISPLAY,
@@ -43,24 +49,32 @@ class CapabilityProbe(
             ),
             status(
                 Capability.WRITE_SYSTEM_SETTINGS,
-                if (Settings.System.canWrite(context)) CapabilityState.GRANTED
+                if (canWriteRestrictedSystem) CapabilityState.GRANTED
                 else CapabilityState.USER_ACTION_REQUIRED,
-                if (Settings.System.canWrite(context)) "可以写入 min/peak_refresh_rate"
-                else "需要在系统设置中允许修改系统设置",
-                actionLabel = if (Settings.System.canWrite(context)) null else "去授权",
+                when {
+                    canWriteRestrictedSystem -> buildString {
+                        append("可通过 Shizuku shell 写入 min/peak_refresh_rate")
+                        privilege.shizukuUid?.let { append("（UID $it）") }
+                    }
+                    Settings.System.canWrite(context) ->
+                        "普通“修改系统设置”权限已开启，但 min/peak_refresh_rate 属于受限 System 键，仍需 Shizuku"
+                    else ->
+                        "核心刷新率写入需要 Shizuku；普通 WRITE_SETTINGS 不能写入受限 min/peak_refresh_rate"
+                },
+                actionLabel = if (canWriteRestrictedSystem) null else privilegedAction ?: "授权 Shizuku",
             ),
             status(
                 Capability.WRITE_SECURE_SETTINGS,
-                if (privilege.writeSecureSettingsGranted) CapabilityState.GRANTED
+                if (privilege.canWriteSecureOrGlobal) CapabilityState.GRANTED
                 else CapabilityState.USER_ACTION_REQUIRED,
-                privilegedExplanation,
-                actionLabel = privilegedAction,
+                if (privilege.canWriteSecureOrGlobal) privilegedExplanation else privilegedExplanation,
+                actionLabel = if (privilege.canWriteSecureOrGlobal) null else privilegedAction,
             ),
             status(
                 Capability.WRITE_GLOBAL_SETTINGS,
                 if (privilege.canWriteSecureOrGlobal) CapabilityState.GRANTED
                 else CapabilityState.USER_ACTION_REQUIRED,
-                if (privilege.canWriteSecureOrGlobal) "可以写入 Global 设置"
+                if (privilege.canWriteSecureOrGlobal) "可以通过特权后端写入 Global 设置"
                 else privilegedExplanation,
                 actionLabel = if (privilege.canWriteSecureOrGlobal) null else privilegedAction,
             ),
@@ -69,7 +83,18 @@ class CapabilityProbe(
                 if (privilege.canUseShizukuShell) CapabilityState.GRANTED
                 else CapabilityState.USER_ACTION_REQUIRED,
                 when {
-                    privilege.canUseShizukuShell -> "Shizuku 已连接并授权"
+                    privilege.canUseShizukuShell -> buildString {
+                        append("Shizuku 已连接并授权")
+                        privilege.shizukuUid?.let { uid ->
+                            append(
+                                when (uid) {
+                                    0 -> "（Root UID 0）"
+                                    2000 -> "（ADB shell UID 2000）"
+                                    else -> "（UID $uid）"
+                                },
+                            )
+                        }
+                    }
                     !privilege.shizukuInstalled -> "未安装 Shizuku"
                     !privilege.binderAlive -> "未检测到 Shizuku binder"
                     else -> "Shizuku 已连接，等待 App 授权${privilege.shizukuVersionName?.let { "（$it）" } ?: ""}"
