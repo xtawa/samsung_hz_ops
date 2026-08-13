@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.IBinder
 import com.xtawa.samsunghzops.HzOpsApplication
 import com.xtawa.samsunghzops.core.model.OperationResult
+import com.xtawa.samsunghzops.core.model.RefreshReason
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,21 +34,26 @@ class AutomationService : Service() {
         serviceScope.launch {
             combine(
                 container.preferences.automationEnabled,
+                container.preferences.masterEnabled,
                 container.policy.decision,
                 container.powerSave.state,
-            ) { enabled, decision, psm -> Triple(enabled, decision, psm) }
-                .distinctUntilChanged { old, new ->
-                    old.first == new.first &&
-                        old.second == new.second &&
-                        old.third.powerSaveMode == new.third.powerSaveMode &&
-                        old.third.keepHighRefresh == new.third.keepHighRefresh
-                }
-                .collect { (enabled, decision, psm) ->
-                    if (!enabled) return@collect
-                    if (psm.powerSaveMode && !psm.keepHighRefresh) return@collect
-                    when (val result = container.refreshRates.applyDecision(decision)) {
+            ) { automation, master, decision, psm ->
+                AutomationTick(automation, master, decision, psm.powerSaveMode, psm.keepHighRefresh)
+            }
+                .distinctUntilChanged()
+                .collect { tick ->
+                    if (!tick.automationEnabled || !tick.masterEnabled) return@collect
+                    if (!tick.decision.shouldApply) return@collect
+                    if (tick.decision.reasonCode == RefreshReason.THERMAL) return@collect
+                    if (tick.decision.reasonCode == RefreshReason.EMERGENCY_OR_MASTER_OFF) return@collect
+                    if (tick.powerSaveMode && !tick.keepHighRefresh &&
+                        tick.decision.reasonCode != RefreshReason.POWER_SAVE_OR_LOW_BATTERY
+                    ) {
+                        return@collect
+                    }
+                    when (container.refreshRates.applyDecision(tick.decision)) {
                         is OperationResult.Success -> Unit
-                        is OperationResult.Failure -> Unit // surfaced in the UI snapshot
+                        is OperationResult.Failure -> Unit
                     }
                 }
         }
@@ -73,4 +79,12 @@ class AutomationService : Service() {
             startForeground(NotificationSupport.NOTIFICATION_ID, notification)
         }
     }
+
+    private data class AutomationTick(
+        val automationEnabled: Boolean,
+        val masterEnabled: Boolean,
+        val decision: com.xtawa.samsunghzops.core.model.RefreshPolicyDecision,
+        val powerSaveMode: Boolean,
+        val keepHighRefresh: Boolean,
+    )
 }

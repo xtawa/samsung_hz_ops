@@ -57,6 +57,7 @@ class EmergencyResetUseCase(
             is OperationResult.Success -> {
                 managedSettings.clear()
                 preferences.clearMasterSyncSnapshot()
+                preferences.clearDeviceIdleSnapshot()
                 refreshRates.refresh()
                 powerSave.markKeepHighRefreshDisabled()
                 OperationResult.Success(
@@ -81,12 +82,15 @@ class EmergencyResetUseCase(
     }
 
     private suspend fun disableAppAutomationState() {
+        preferences.setMasterEnabled(false)
         preferences.setAutomationEnabled(false)
         preferences.setPsmHighRefreshEnabled(false)
         preferences.setQuickDozeEnabled(false)
         preferences.setBatteryProtectEnabled(false)
         preferences.setNetworkSpeedEnabled(false)
         preferences.setSensorsOffEnabled(false)
+        preferences.setRestoreGuardEnabled(false)
+        preferences.setAdaptiveModEnabled(false)
     }
 
     private suspend fun restoreMasterSyncIfCaptured(): String? = withContext(Dispatchers.IO) {

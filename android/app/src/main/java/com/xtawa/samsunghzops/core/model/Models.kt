@@ -2,7 +2,6 @@ package com.xtawa.samsunghzops.core.model
 
 import java.time.Instant
 
-/** The four user-facing operating modes documented by Samsung Hz Ops. */
 enum class RefreshMode {
     STANDARD,
     ADAPTIVE,
@@ -14,6 +13,25 @@ enum class RefreshMode {
             ADAPTIVE -> "自适应"
             MAXIMUM -> "最高"
         }
+}
+
+enum class DisplayTarget {
+    MAIN,
+    COVER,
+    EXTERNAL,
+}
+
+enum class RefreshReason(val priority: Int) {
+    THERMAL(100),
+    EMERGENCY_OR_MASTER_OFF(90),
+    CAMERA_CAST_EXTERNAL(80),
+    SCREEN_OFF_AOD(70),
+    POWER_SAVE_OR_LOW_BATTERY(60),
+    FOLD(50),
+    PER_APP(40),
+    ADAPTIVE(30),
+    NORMAL(20),
+    WAITING(0),
 }
 
 enum class SettingNamespace {
@@ -73,7 +91,7 @@ data class DisplayModeInfo(
     val refreshRateHz: Float,
     val alternativeRefreshRatesHz: List<Float> = emptyList(),
 ) {
-    val label: String get() = "${refreshRateHz.toInt()} Hz"
+    val label: String get() = formatHz(refreshRateHz)
 }
 
 data class RefreshRange(
@@ -83,6 +101,8 @@ data class RefreshRange(
     init {
         require(minHz <= maxHz) { "minHz must not exceed maxHz" }
     }
+
+    val label: String get() = "${formatHz(minHz)}–${formatHz(maxHz)}"
 }
 
 data class RefreshSnapshot(
@@ -93,6 +113,8 @@ data class RefreshSnapshot(
     val isPowerSaveMode: Boolean = false,
     val lastAppliedAt: Instant? = null,
     val lastError: String? = null,
+    val applying: Boolean = false,
+    val applyingLabel: String? = null,
 )
 
 data class ManagedSettingSnapshot(
@@ -117,6 +139,13 @@ data class DeviceState(
     val brightnessFraction: Float? = null,
     val isFolded: Boolean = false,
     val thermalStatus: Int? = null,
+    val thermalRestricted: Boolean = false,
+    val batteryPercent: Int? = null,
+    val isCharging: Boolean = false,
+    val isAod: Boolean = false,
+    val isPowerSaveMode: Boolean = false,
+    val lowBatteryActive: Boolean = false,
+    val displayTarget: DisplayTarget = DisplayTarget.MAIN,
     val eventTimestamp: Instant = Instant.now(),
 )
 
@@ -124,7 +153,19 @@ data class RefreshPolicyDecision(
     val mode: RefreshMode,
     val range: RefreshRange?,
     val reason: String,
+    val reasonCode: RefreshReason = RefreshReason.NORMAL,
+    val display: DisplayTarget = DisplayTarget.MAIN,
     val confidence: String = "confirmed",
+    val shouldApply: Boolean = true,
+)
+
+data class SystemProfile(
+    val id: String,
+    val title: String,
+    val mode: RefreshMode = RefreshMode.ADAPTIVE,
+    val minHz: Float? = null,
+    val maxHz: Float? = null,
+    val enabled: Boolean = true,
 )
 
 data class SettingSpec(
@@ -184,3 +225,22 @@ data class AppProfile(
     val pauseWhenKeyguard: Boolean = true,
     val updatedAt: Instant = Instant.now(),
 )
+
+fun formatHz(value: Float?): String {
+    if (value == null || !value.isFinite()) return "— Hz"
+    val rounded = kotlin.math.round(value)
+    return if (kotlin.math.abs(value - rounded) < 0.05f) {
+        "${rounded.toInt()} Hz"
+    } else {
+        String.format(java.util.Locale.US, "%.1f Hz", value)
+    }
+}
+
+fun nearestSupportedHz(value: Float, supportedHz: List<Float>): Float =
+    supportedHz.minByOrNull { kotlin.math.abs(it - value) } ?: value
+
+fun supportedHzValues(modes: List<DisplayModeInfo>): List<Float> =
+    modes.map { it.refreshRateHz }
+        .filter { it.isFinite() && it > 0f }
+        .distinct()
+        .sorted()
