@@ -1,6 +1,7 @@
 package com.xtawa.samsunghzops.core.state
 
 import com.xtawa.samsunghzops.core.model.DeviceState
+import com.xtawa.samsunghzops.core.model.DisplayTarget
 import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,5 +42,29 @@ class DeviceStateRepository {
 
     fun setFolded(folded: Boolean) = update {
         it.copy(isFolded = folded)
+    }
+
+    fun setThermal(status: Int?, restricted: Boolean) = update {
+        it.copy(thermalStatus = status, thermalRestricted = restricted)
+    }
+
+    fun setBattery(percent: Int?, charging: Boolean, lowBatteryActive: Boolean) = update {
+        it.copy(
+            batteryPercent = percent,
+            isCharging = charging,
+            lowBatteryActive = lowBatteryActive,
+        )
+    }
+
+    fun setAod(enabled: Boolean) = update {
+        it.copy(isAod = enabled)
+    }
+
+    fun setPowerSaveMode(enabled: Boolean) = update {
+        it.copy(isPowerSaveMode = enabled)
+    }
+
+    fun setDisplayTarget(target: DisplayTarget) = update {
+        it.copy(displayTarget = target)
     }
 }
