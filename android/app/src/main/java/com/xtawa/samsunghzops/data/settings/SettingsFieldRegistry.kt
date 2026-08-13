@@ -15,13 +15,16 @@ object SettingsFieldRegistry {
         SettingNamespace.SYSTEM,
         "min_refresh_rate",
         "系统允许的最低刷新率",
-        requiresPrivilegedWrite = false,
+        // Hidden System key: modern targetSdk apps are rejected by
+        // SettingsProvider even with ordinary WRITE_SETTINGS.
+        requiresPrivilegedWrite = true,
     )
     val peakRefreshRate = SettingSpec(
         SettingNamespace.SYSTEM,
         "peak_refresh_rate",
         "系统允许的最高刷新率",
-        requiresPrivilegedWrite = false,
+        // Same restriction as min_refresh_rate; route via shell/root.
+        requiresPrivilegedWrite = true,
     )
     val refreshRateMode = SettingSpec(
         SettingNamespace.SECURE,
