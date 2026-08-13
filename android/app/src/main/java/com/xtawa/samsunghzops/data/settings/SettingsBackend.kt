@@ -20,12 +20,15 @@ interface SettingsBackend {
 }
 
 /**
- * Optional bridge for Settings.Secure/Global writes. Implementations may use
- * Shizuku, root, or a future companion process. The app never assumes that a
- * privileged bridge exists.
+ * Optional bridge for settings that must be mutated as shell/root or by an
+ * already privileged app process. Implementations may use Shizuku, root, or a
+ * future companion process.
  */
 interface PrivilegedSettingsWriter {
     fun isAvailable(): Boolean
+
+    /** Whether this backend can mutate a specific Settings namespace. */
+    fun canWrite(namespace: SettingNamespace): Boolean = isAvailable()
 
     fun statusSnapshot(): PrivilegedBackendStatus = PrivilegedBackendStatus()
 
@@ -54,40 +57,91 @@ class AndroidSettingsBackend(
         OperationResult.Failure("读取 ${spec.key} 失败：${error.message ?: error.javaClass.simpleName}")
     }
 
-    override fun canWrite(spec: SettingSpec): Boolean = when (spec.namespace) {
-        SettingNamespace.SYSTEM -> Settings.System.canWrite(context)
-        SettingNamespace.SECURE, SettingNamespace.GLOBAL -> privilegedWriter.isAvailable()
-        SettingNamespace.SYSFS -> false
+    override fun canWrite(spec: SettingSpec): Boolean {
+        if (spec.namespace == SettingNamespace.SYSFS) return false
+
+        // Hidden System keys such as min_refresh_rate/peak_refresh_rate are
+        // rejected for modern third-party UIDs even when WRITE_SETTINGS is
+        // granted. Respect the registry flag and require the privileged bridge.
+        if (spec.requiresPrivilegedWrite) {
+            return privilegedWriter.canWrite(spec.namespace)
+        }
+
+        return when (spec.namespace) {
+            SettingNamespace.SYSTEM ->
+                Settings.System.canWrite(context) || privilegedWriter.canWrite(SettingNamespace.SYSTEM)
+            SettingNamespace.SECURE,
+            SettingNamespace.GLOBAL,
+            -> privilegedWriter.canWrite(spec.namespace)
+            SettingNamespace.SYSFS -> false
+        }
     }
 
     override suspend fun write(spec: SettingSpec, value: String?): OperationResult<Unit> {
         if (!canWrite(spec)) {
-            val capability = when (spec.namespace) {
-                SettingNamespace.SYSTEM -> Capability.WRITE_SYSTEM_SETTINGS
-                SettingNamespace.SECURE -> Capability.WRITE_SECURE_SETTINGS
-                SettingNamespace.GLOBAL -> Capability.WRITE_GLOBAL_SETTINGS
-                SettingNamespace.SYSFS -> Capability.SHIZUKU
+            val capability = when {
+                spec.namespace == SettingNamespace.SYSTEM && spec.requiresPrivilegedWrite -> Capability.SHIZUKU
+                spec.namespace == SettingNamespace.SYSTEM -> Capability.WRITE_SYSTEM_SETTINGS
+                spec.namespace == SettingNamespace.SECURE -> Capability.WRITE_SECURE_SETTINGS
+                spec.namespace == SettingNamespace.GLOBAL -> Capability.WRITE_GLOBAL_SETTINGS
+                else -> Capability.SHIZUKU
+            }
+            val hint = if (spec.namespace == SettingNamespace.SYSTEM && spec.requiresPrivilegedWrite) {
+                "；该 System 私有键必须通过 Shizuku shell/root 身份写入"
+            } else {
+                ""
             }
             return OperationResult.Failure(
-                "没有写入 ${spec.key} 所需的权限",
+                "没有写入 ${spec.key} 所需的权限$hint",
                 missingCapabilities = listOf(capability),
             )
         }
 
+        // Never fall back to the app UID for a field explicitly marked as
+        // privileged. That fallback is what caused SettingsProvider to throw
+        // "You cannot keep your settings in the secure settings" for
+        // min_refresh_rate on modern targetSdk builds.
+        if (spec.requiresPrivilegedWrite) {
+            return privilegedWriter.put(spec.namespace, spec.key, value)
+        }
+
         return when (spec.namespace) {
-            SettingNamespace.SYSTEM -> withContext(Dispatchers.IO) {
-                runCatching {
-                    check(Settings.System.putString(resolver, spec.key, value))
-                    OperationResult.Success(Unit)
-                }.getOrElse { error ->
-                    OperationResult.Failure("写入 ${spec.key} 失败：${error.message ?: "系统拒绝"}")
+            SettingNamespace.SYSTEM -> {
+                if (Settings.System.canWrite(context)) {
+                    writeSystemDirect(spec, value)
+                } else {
+                    privilegedWriter.put(spec.namespace, spec.key, value)
                 }
             }
 
             SettingNamespace.SECURE,
             SettingNamespace.GLOBAL,
-            SettingNamespace.SYSFS,
             -> privilegedWriter.put(spec.namespace, spec.key, value)
+
+            SettingNamespace.SYSFS -> OperationResult.Failure(
+                "sysfs 写入必须由经过设备校准的后端提供",
+                recoverable = false,
+            )
+        }
+    }
+
+    private suspend fun writeSystemDirect(
+        spec: SettingSpec,
+        value: String?,
+    ): OperationResult<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            check(Settings.System.putString(resolver, spec.key, value))
+            OperationResult.Success(Unit)
+        }.getOrElse { error ->
+            val message = if (
+                error is IllegalArgumentException &&
+                error.message?.contains("secure settings", ignoreCase = true) == true
+            ) {
+                "系统拒绝普通应用写入 ${spec.key}；请启用 Shizuku 特权后端"
+            } else {
+                "写入 ${spec.key} 失败：${error.message ?: "系统拒绝"}"
+            }
+            OperationResult.Failure(message)
         }
     }
 
