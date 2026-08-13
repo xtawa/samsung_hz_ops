@@ -23,6 +23,7 @@ data class PrivilegedBackendStatus(
     val shizukuVersionName: String? = null,
     val binderAlive: Boolean = false,
     val shizukuPermissionGranted: Boolean = false,
+    val shizukuUid: Int? = null,
     val writeSecureSettingsGranted: Boolean = false,
     val lastMessage: String? = null,
 ) {
@@ -31,10 +32,12 @@ data class PrivilegedBackendStatus(
 }
 
 /**
- * Settings CLI bridge used when the user explicitly grants Shizuku access.
- * It intentionally accepts only the namespace/key/value supplied by the
- * registry and invokes Shizuku with fixed argument arrays instead of a shell
- * string.
+ * Privileged Settings bridge.
+ *
+ * Hidden System keys (including min_refresh_rate/peak_refresh_rate) must be
+ * executed as Shizuku's shell/root identity on modern Android. Secure/Global
+ * keys prefer the same shell path, with direct WRITE_SECURE_SETTINGS only as a
+ * fallback when Shizuku is unavailable.
  */
 class ShizukuSettingsWriter(
     context: Context,
@@ -76,7 +79,22 @@ class ShizukuSettingsWriter(
         runCatching { Shizuku.addRequestPermissionResultListener(requestPermissionResultListener) }
     }
 
-    override fun isAvailable(): Boolean = readStatus().canWriteSecureOrGlobal
+    override fun isAvailable(): Boolean {
+        val current = readStatus()
+        return current.canUseShizukuShell || current.writeSecureSettingsGranted
+    }
+
+    override fun canWrite(namespace: SettingNamespace): Boolean {
+        val current = readStatus()
+        return when (namespace) {
+            // Restricted Settings.System keys must originate from shell/root.
+            SettingNamespace.SYSTEM -> current.canUseShizukuShell
+            SettingNamespace.SECURE,
+            SettingNamespace.GLOBAL,
+            -> current.canWriteSecureOrGlobal
+            SettingNamespace.SYSFS -> false
+        }
+    }
 
     override fun statusSnapshot(): PrivilegedBackendStatus = readStatus()
 
@@ -85,9 +103,16 @@ class ShizukuSettingsWriter(
         val current = readStatus()
         if (current.writeSecureSettingsGranted) {
             pendingGrantPackage.set(null)
-            return when (val validation = validateDirectSettingsWrite()) {
-                is OperationResult.Success -> OperationResult.Success(Unit, listOf("安全设置权限已就绪"))
-                is OperationResult.Failure -> validation
+            // If Shizuku is alive, the shell path is already the preferred
+            // backend for all managed keys. The direct probe remains useful as
+            // a fallback validation only when shell is unavailable.
+            return if (current.canUseShizukuShell) {
+                OperationResult.Success(Unit, listOf("Shizuku shell 与安全设置权限已就绪"))
+            } else {
+                when (val validation = validateDirectSettingsWrite()) {
+                    is OperationResult.Success -> OperationResult.Success(Unit, listOf("安全设置权限已就绪"))
+                    is OperationResult.Failure -> validation
+                }
             }
         }
         if (!current.shizukuInstalled) {
@@ -108,15 +133,20 @@ class ShizukuSettingsWriter(
         }
 
         pendingGrantPackage.set(packageName)
-        return when (val result = runShizukuCommand("授予 WRITE_SECURE_SETTINGS", "pm", "grant", packageName, Manifest.permission.WRITE_SECURE_SETTINGS)) {
+        return when (
+            val result = runShizukuCommand(
+                "授予 WRITE_SECURE_SETTINGS",
+                "pm",
+                "grant",
+                packageName,
+                Manifest.permission.WRITE_SECURE_SETTINGS,
+            )
+        ) {
             is OperationResult.Success -> {
                 refreshStatus("已通过 Shizuku 授予安全设置权限")
                 pendingGrantPackage.set(null)
                 if (hasWriteSecureSettingsPermission()) {
-                    when (val validation = validateDirectSettingsWrite()) {
-                        is OperationResult.Success -> OperationResult.Success(Unit, listOf("安全设置权限已授予并通过写入验证"))
-                        is OperationResult.Failure -> validation
-                    }
+                    OperationResult.Success(Unit, listOf("Shizuku shell 与安全设置权限已就绪"))
                 } else {
                     OperationResult.Failure("pm grant 已执行，但系统未确认 WRITE_SECURE_SETTINGS")
                 }
@@ -134,12 +164,47 @@ class ShizukuSettingsWriter(
         key: String,
         value: String?,
     ): OperationResult<Unit> {
-        if (namespace != SettingNamespace.SECURE && namespace != SettingNamespace.GLOBAL) {
-            return OperationResult.Failure("Shizuku 仅用于 Secure/Global 设置")
+        if (namespace == SettingNamespace.SYSFS) {
+            return OperationResult.Failure("通用 Settings 后端不处理 sysfs")
         }
-        if (!isAvailable()) return OperationResult.Failure("未获得安全设置权限；请先完成 Shizuku 授权")
 
-        if (hasWriteSecureSettingsPermission()) {
+        val current = readStatus()
+        if (!canWrite(namespace)) {
+            return when (namespace) {
+                SettingNamespace.SYSTEM -> OperationResult.Failure(
+                    "无法写入 $key：该 System 私有设置必须通过已授权的 Shizuku shell/root 身份写入",
+                )
+                SettingNamespace.SECURE,
+                SettingNamespace.GLOBAL,
+                -> OperationResult.Failure("未获得安全设置权限；请先完成 Shizuku 授权")
+                SettingNamespace.SYSFS -> OperationResult.Failure("通用 Settings 后端不处理 sysfs")
+            }
+        }
+
+        // Critical: prefer shell/root identity even when the app has already
+        // been granted WRITE_SECURE_SETTINGS. Direct app-UID writes to hidden
+        // Settings.System keys are rejected on modern targetSdk versions.
+        if (current.canUseShizukuShell) {
+            val table = when (namespace) {
+                SettingNamespace.SYSTEM -> "system"
+                SettingNamespace.SECURE -> "secure"
+                SettingNamespace.GLOBAL -> "global"
+                SettingNamespace.SYSFS -> error("validated above")
+            }
+            return if (value == null) {
+                runShizukuCommand("删除 $key", "settings", "delete", table, key)
+            } else {
+                runShizukuCommand("写入 $key", "settings", "put", table, key, value)
+            }
+        }
+
+        // Fallback for devices where WRITE_SECURE_SETTINGS was granted by ADB
+        // but Shizuku is not currently running. This fallback intentionally
+        // excludes Settings.System restricted keys.
+        if (
+            (namespace == SettingNamespace.SECURE || namespace == SettingNamespace.GLOBAL) &&
+            hasWriteSecureSettingsPermission()
+        ) {
             return withContext(Dispatchers.IO) {
                 runCatching {
                     val resolver = appContext.contentResolver
@@ -156,17 +221,7 @@ class ShizukuSettingsWriter(
             }
         }
 
-        val table = when (namespace) {
-            SettingNamespace.SECURE -> "secure"
-            SettingNamespace.GLOBAL -> "global"
-            else -> error("validated above")
-        }
-
-        return if (value == null) {
-            runShizukuCommand("删除 $key", "settings", "delete", table, key)
-        } else {
-            runShizukuCommand("写入 $key", "settings", "put", table, key, value)
-        }
+        return OperationResult.Failure("没有可用的特权后端写入 $key")
     }
 
     private fun requestShizukuPermission(): OperationResult<Unit> = runCatching {
@@ -179,9 +234,10 @@ class ShizukuSettingsWriter(
 
     private suspend fun runShizukuCommand(label: String, vararg args: String): OperationResult<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            // Shizuku 13 exposes this bridge with different visibility
-            // across API artifacts. Resolve it only after the user has
-            // granted Shizuku; an unavailable method is a safe failure.
+            // Shizuku 13 exposes this legacy process bridge with different
+            // visibility across API artifacts. Resolve it reflectively after
+            // permission is granted. All command arguments remain fixed arrays
+            // rather than interpolated shell strings.
             val method = Shizuku::class.java.getDeclaredMethod(
                 "newProcess",
                 Array<String>::class.java,
@@ -189,7 +245,7 @@ class ShizukuSettingsWriter(
                 String::class.java,
             ).apply { isAccessible = true }
             val process = method.invoke(null, args.toList().toTypedArray(), null, null) as? Process
-                ?: return@runCatching OperationResult.Failure("Shizuku newProcess 不可用")
+                ?: return@runCatching OperationResult.Failure("Shizuku shell 进程不可用")
             val completed = process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             if (!completed) {
                 process.destroy()
@@ -222,11 +278,17 @@ class ShizukuSettingsWriter(
         } else {
             false
         }
+        val shizukuUid = if (binderAlive && shizukuPermissionGranted) {
+            runCatching { Shizuku.getUid() }.getOrNull()
+        } else {
+            null
+        }
         return PrivilegedBackendStatus(
             shizukuInstalled = shizukuPackage != null,
             shizukuVersionName = shizukuPackage?.versionName,
             binderAlive = binderAlive,
             shizukuPermissionGranted = shizukuPermissionGranted,
+            shizukuUid = shizukuUid,
             writeSecureSettingsGranted = hasWriteSecureSettingsPermission(),
             lastMessage = message,
         )
