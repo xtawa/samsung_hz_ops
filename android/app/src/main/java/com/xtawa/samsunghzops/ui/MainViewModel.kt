@@ -19,7 +19,6 @@ import com.xtawa.samsunghzops.data.samsung.PsmState
 import com.xtawa.samsunghzops.data.profile.TransactionEntity
 import com.xtawa.samsunghzops.service.AutomationService
 import com.xtawa.samsunghzops.service.RefreshMonitorService
-import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -140,8 +139,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         runOperation {
-            container.preferences.setDefaultMode(mode)
-            container.refreshRates.applyMode(mode, range, "控制页")
+            // Persist the requested default only after the complete settings
+            // transaction has committed and read-back verification succeeded.
+            // Otherwise a failed UI tap would silently change later automation.
+            val result = container.refreshRates.applyMode(mode, range, "控制页")
+            if (result is OperationResult.Success) {
+                container.preferences.setDefaultMode(mode)
+            }
+            result
         }
     }
 
@@ -153,12 +158,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val max = modes.map { it.refreshRateHz }.minByOrNull { kotlin.math.abs(it - maxHz) } ?: maxHz
         val safeMin = min.coerceAtMost(max)
         runOperation {
-            container.preferences.setDefaultMode(RefreshMode.ADAPTIVE)
-            container.refreshRates.applyMode(
+            val result = container.refreshRates.applyMode(
                 RefreshMode.ADAPTIVE,
                 com.xtawa.samsunghzops.core.model.RefreshRange(safeMin, max.coerceAtLeast(safeMin)),
                 "自适应范围",
             )
+            if (result is OperationResult.Success) {
+                container.preferences.setDefaultMode(RefreshMode.ADAPTIVE)
+            }
+            result
         }
     }
 
