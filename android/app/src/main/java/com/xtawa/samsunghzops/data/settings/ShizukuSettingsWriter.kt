@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.provider.Settings
 import com.xtawa.samsunghzops.core.model.OperationResult
 import com.xtawa.samsunghzops.core.model.SettingNamespace
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,7 +14,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
 
 data class PrivilegedBackendStatus(
@@ -87,7 +88,6 @@ class ShizukuSettingsWriter(
     override fun canWrite(namespace: SettingNamespace): Boolean {
         val current = readStatus()
         return when (namespace) {
-            // Restricted Settings.System keys must originate from shell/root.
             SettingNamespace.SYSTEM -> current.canUseShizukuShell
             SettingNamespace.SECURE,
             SettingNamespace.GLOBAL,
@@ -103,9 +103,6 @@ class ShizukuSettingsWriter(
         val current = readStatus()
         if (current.writeSecureSettingsGranted) {
             pendingGrantPackage.set(null)
-            // If Shizuku is alive, the shell path is already the preferred
-            // backend for all managed keys. The direct probe remains useful as
-            // a fallback validation only when shell is unavailable.
             return if (current.canUseShizukuShell) {
                 OperationResult.Success(Unit, listOf("Shizuku shell 与安全设置权限已就绪"))
             } else {
@@ -181,9 +178,6 @@ class ShizukuSettingsWriter(
             }
         }
 
-        // Critical: prefer shell/root identity even when the app has already
-        // been granted WRITE_SECURE_SETTINGS. Direct app-UID writes to hidden
-        // Settings.System keys are rejected on modern targetSdk versions.
         if (current.canUseShizukuShell) {
             val table = when (namespace) {
                 SettingNamespace.SYSTEM -> "system"
@@ -198,9 +192,6 @@ class ShizukuSettingsWriter(
             }
         }
 
-        // Fallback for devices where WRITE_SECURE_SETTINGS was granted by ADB
-        // but Shizuku is not currently running. This fallback intentionally
-        // excludes Settings.System restricted keys.
         if (
             (namespace == SettingNamespace.SECURE || namespace == SettingNamespace.GLOBAL) &&
             hasWriteSecureSettingsPermission()
@@ -232,29 +223,55 @@ class ShizukuSettingsWriter(
         OperationResult.Failure("请求 Shizuku 授权失败：${error.message ?: error.javaClass.simpleName}")
     }
 
-    private suspend fun runShizukuCommand(label: String, vararg args: String): OperationResult<Unit> = withContext(Dispatchers.IO) {
+    private suspend fun runShizukuCommand(
+        label: String,
+        vararg args: String,
+    ): OperationResult<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            // Shizuku 13 exposes this legacy process bridge with different
-            // visibility across API artifacts. Resolve it reflectively after
-            // permission is granted. All command arguments remain fixed arrays
-            // rather than interpolated shell strings.
             val method = Shizuku::class.java.getDeclaredMethod(
                 "newProcess",
                 Array<String>::class.java,
                 Array<String>::class.java,
                 String::class.java,
             ).apply { isAccessible = true }
-            val process = method.invoke(null, args.toList().toTypedArray(), null, null) as? Process
+
+            val command = args.toMutableList().apply {
+                if (isNotEmpty()) {
+                    this[0] = when (this[0]) {
+                        "settings" -> "/system/bin/settings"
+                        "pm" -> "/system/bin/pm"
+                        else -> this[0]
+                    }
+                }
+            }.toTypedArray()
+
+            val process = method.invoke(null, command, null, null) as? Process
                 ?: return@runCatching OperationResult.Failure("Shizuku shell 进程不可用")
-            val completed = process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            if (!completed) {
-                process.destroy()
+
+            // ShizukuRemoteProcess does not reliably implement the Java 8
+            // Process.waitFor(timeout, unit) default path on all Android builds.
+            // That path can call exitValue() while the remote process is still
+            // running and surface IllegalThreadStateException: "process hasn't exited".
+            // Wait with the blocking waitFor() implementation instead and put
+            // the timeout around the coroutine, where cancellation interrupts
+            // the waiting thread safely.
+            runCatching { process.outputStream.close() }
+            val exitCode = withTimeoutOrNull(COMMAND_TIMEOUT_MILLIS) {
+                runInterruptible(Dispatchers.IO) { process.waitFor() }
+            }
+            if (exitCode == null) {
+                runCatching { process.destroy() }
                 return@runCatching OperationResult.Failure("Shizuku 命令超时：$label")
             }
-            val exitCode = process.exitValue()
+
+            val stderr = runCatching {
+                process.errorStream.bufferedReader().readText().trimForUser()
+            }.getOrDefault("")
+            val stdout = runCatching {
+                process.inputStream.bufferedReader().readText().trimForUser()
+            }.getOrDefault("")
+
             if (exitCode != 0) {
-                val stderr = process.errorStream.bufferedReader().readText().trimForUser()
-                val stdout = process.inputStream.bufferedReader().readText().trimForUser()
                 OperationResult.Failure(
                     buildString {
                         append("Shizuku 命令失败：$label（exit=$exitCode）")
@@ -266,7 +283,13 @@ class ShizukuSettingsWriter(
                 OperationResult.Success(Unit)
             }
         }.getOrElse { error ->
-            OperationResult.Failure("Shizuku 执行失败：${error.message ?: error.javaClass.simpleName}")
+            val current = readStatus()
+            OperationResult.Failure(
+                buildString {
+                    append("Shizuku 执行失败：${error.message ?: error.javaClass.simpleName}")
+                    current.shizukuUid?.let { append("（UID $it）") }
+                },
+            )
         }
     }
 
@@ -341,7 +364,7 @@ class ShizukuSettingsWriter(
     private companion object {
         const val REQUEST_CODE_SHIZUKU_PERMISSION = 4201
         const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
-        const val COMMAND_TIMEOUT_SECONDS = 15L
+        const val COMMAND_TIMEOUT_MILLIS = 15_000L
         const val VALIDATION_KEY = "samsung_hz_ops_privileged_write_probe"
     }
 }
