@@ -73,6 +73,11 @@ class RefreshRateRepository(
             false,
             settingsObserver,
         )
+        resolver.registerContentObserver(
+            Settings.Secure.getUriFor(SettingsFieldRegistry.refreshRateMode.key),
+            false,
+            settingsObserver,
+        )
         ContextCompat.registerReceiver(
             appContext,
             powerReceiver,
@@ -159,23 +164,36 @@ class RefreshRateRepository(
             operation = "刷新率：${mode.name.lowercase(Locale.ROOT)}（$reason）",
             requestedMutations = mutations,
         )
-        if (result is OperationResult.Success) {
-            val warnings = if (samsungModeMapping.valueFor(mode) == null) {
-                listOf("未写入三星 refresh_rate_mode：需要目标机校准映射")
-            } else {
-                emptyList()
+        return when (result) {
+            is OperationResult.Success -> {
+                // The transaction already performs write/read-back verification.
+                // Re-read all UI-visible state after commit so the selected chip,
+                // current range and live rate come from the device rather than
+                // from an optimistic local assignment.
+                refresh()
+                val warnings = if (samsungModeMapping.valueFor(mode) == null) {
+                    listOf("未写入三星 refresh_rate_mode：需要目标机校准映射")
+                } else {
+                    emptyList()
+                }
+                _snapshot.value = _snapshot.value.copy(
+                    activeMode = mode,
+                    range = range,
+                    lastAppliedAt = Instant.now(),
+                    lastError = null,
+                )
+                OperationResult.Success(Unit, warnings)
             }
-            _snapshot.value = _snapshot.value.copy(
-                activeMode = mode,
-                range = range,
-                lastAppliedAt = Instant.now(),
-                lastError = null,
-            )
-            return OperationResult.Success(Unit, warnings)
-        } else if (result is OperationResult.Failure) {
-            _snapshot.value = _snapshot.value.copy(lastError = result.message)
+
+            is OperationResult.Failure -> {
+                // TransactionCoordinator may have rolled back one or more keys.
+                // Reload after rollback before showing the error, otherwise the UI
+                // can continue displaying the failed target state.
+                refresh()
+                _snapshot.value = _snapshot.value.copy(lastError = result.message)
+                result
+            }
         }
-        return result
     }
 
     suspend fun resetToSystemDefault(): OperationResult<Unit> {
