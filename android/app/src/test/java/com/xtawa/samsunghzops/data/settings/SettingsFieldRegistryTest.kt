@@ -15,6 +15,13 @@ class SettingsFieldRegistryTest {
     }
 
     @Test
+    fun hiddenRefreshRateKeysRequirePrivilegedIdentity() {
+        assertTrue(SettingsFieldRegistry.minRefreshRate.requiresPrivilegedWrite)
+        assertTrue(SettingsFieldRegistry.peakRefreshRate.requiresPrivilegedWrite)
+        assertTrue(SettingsFieldRegistry.userRefreshRate.requiresPrivilegedWrite)
+    }
+
+    @Test
     fun coverPsmKeysAreExplicitlyNamed() {
         assertEquals("pms_settings_refresh_rate_cover_enabled", SettingsFieldRegistry.psmRefreshRateEnabledCover.key)
         assertEquals("psm_refresh_rate_cover_tag", SettingsFieldRegistry.psmRefreshRateTagCover.key)
