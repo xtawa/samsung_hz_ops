@@ -57,17 +57,21 @@ class CapabilityProbe(
                         privilege.shizukuUid?.let { append("（UID $it）") }
                     }
                     Settings.System.canWrite(context) ->
-                        "普通“修改系统设置”权限已开启，但 min/peak_refresh_rate 属于受限 System 键，仍需 Shizuku"
+                        "普通“修改系统设置”权限已开启，但 min/peak_refresh_rate 属于受限 System 键，仍需 Shizuku；请使用下方 Shizuku 授权入口"
                     else ->
-                        "核心刷新率写入需要 Shizuku；普通 WRITE_SETTINGS 不能写入受限 min/peak_refresh_rate"
+                        "核心刷新率写入需要 Shizuku；普通 WRITE_SETTINGS 不能写入受限 min/peak_refresh_rate，请使用下方 Shizuku 授权入口"
                 },
-                actionLabel = if (canWriteRestrictedSystem) null else privilegedAction ?: "授权 Shizuku",
+                // Do not show the generic WRITE_SETTINGS action here: opening
+                // ACTION_MANAGE_WRITE_SETTINGS would suggest it can unlock the
+                // hidden refresh-rate keys, which is false on modern Android.
+                // The dedicated Shizuku row below owns the actual action.
+                actionLabel = null,
             ),
             status(
                 Capability.WRITE_SECURE_SETTINGS,
                 if (privilege.canWriteSecureOrGlobal) CapabilityState.GRANTED
                 else CapabilityState.USER_ACTION_REQUIRED,
-                if (privilege.canWriteSecureOrGlobal) privilegedExplanation else privilegedExplanation,
+                privilegedExplanation,
                 actionLabel = if (privilege.canWriteSecureOrGlobal) null else privilegedAction,
             ),
             status(
