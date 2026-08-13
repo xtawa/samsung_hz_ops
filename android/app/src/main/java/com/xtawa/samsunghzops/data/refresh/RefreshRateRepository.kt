@@ -138,15 +138,18 @@ class RefreshRateRepository(
         if (range == null) {
             return OperationResult.Failure("设备尚未报告可用刷新率")
         }
+
         val mutations = buildList {
-            samsungModeMapping.valueFor(mode)?.let { modeValue ->
-                add(
-                    SettingMutation(
-                        spec = SettingsFieldRegistry.refreshRateMode,
-                        value = modeValue,
-                    ),
-                )
-            }
+            // Samsung Motion Smoothness uses 0 for Standard and 1 for the
+            // high/adaptive mode on the One UI generations targeted by this app.
+            // "Maximum" is not a separate Samsung OEM mode: it keeps the OEM
+            // high-refresh mode enabled and fixes min/peak to the panel maximum.
+            add(
+                SettingMutation(
+                    spec = SettingsFieldRegistry.refreshRateMode,
+                    value = samsungModeMapping.valueFor(mode),
+                ),
+            )
             add(
                 SettingMutation(
                     spec = SettingsFieldRegistry.minRefreshRate,
@@ -160,6 +163,7 @@ class RefreshRateRepository(
                 ),
             )
         }
+
         val result = transactions.apply(
             operation = "刷新率：${mode.name.lowercase(Locale.ROOT)}（$reason）",
             requestedMutations = mutations,
@@ -171,18 +175,13 @@ class RefreshRateRepository(
                 // current range and live rate come from the device rather than
                 // from an optimistic local assignment.
                 refresh()
-                val warnings = if (samsungModeMapping.valueFor(mode) == null) {
-                    listOf("未写入三星 refresh_rate_mode：需要目标机校准映射")
-                } else {
-                    emptyList()
-                }
                 _snapshot.value = _snapshot.value.copy(
                     activeMode = mode,
                     range = range,
                     lastAppliedAt = Instant.now(),
                     lastError = null,
                 )
-                OperationResult.Success(Unit, warnings)
+                OperationResult.Success(Unit)
             }
 
             is OperationResult.Failure -> {
@@ -199,16 +198,11 @@ class RefreshRateRepository(
     suspend fun resetToSystemDefault(): OperationResult<Unit> {
         val result = transactions.reset(
             operation = "恢复系统默认刷新率",
-            specs = buildList {
-                add(SettingsFieldRegistry.minRefreshRate)
-                add(SettingsFieldRegistry.peakRefreshRate)
-                if (samsungModeMapping.standard != null ||
-                    samsungModeMapping.adaptive != null ||
-                    samsungModeMapping.maximum != null
-                ) {
-                    add(SettingsFieldRegistry.refreshRateMode)
-                }
-            },
+            specs = listOf(
+                SettingsFieldRegistry.refreshRateMode,
+                SettingsFieldRegistry.minRefreshRate,
+                SettingsFieldRegistry.peakRefreshRate,
+            ),
         )
         refresh()
         return result
@@ -275,13 +269,17 @@ class RefreshRateRepository(
     }
 }
 
-/** Numeric Samsung mode values vary by One UI/device; keep them injectable. */
+/**
+ * Samsung One UI Motion Smoothness mapping used by the supported Galaxy path.
+ * Standard maps to 0; Adaptive/High maps to 1. Maximum intentionally reuses 1
+ * and is differentiated by min_refresh_rate == peak_refresh_rate == panel max.
+ */
 data class SamsungModeMapping(
-    val standard: String? = null,
-    val adaptive: String? = null,
-    val maximum: String? = null,
+    val standard: String = "0",
+    val adaptive: String = "1",
+    val maximum: String = "1",
 ) {
-    fun valueFor(mode: RefreshMode): String? = when (mode) {
+    fun valueFor(mode: RefreshMode): String = when (mode) {
         RefreshMode.STANDARD -> standard
         RefreshMode.ADAPTIVE -> adaptive
         RefreshMode.MAXIMUM -> maximum
